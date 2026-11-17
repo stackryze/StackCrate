@@ -1,4 +1,6 @@
 pub mod apt;
+pub mod appimage;
+pub mod archive;
 pub mod deb_file;
 pub mod sniff;
 
@@ -31,16 +33,23 @@ pub trait PackageSource: Send + Sync {
 /// Construct every known adapter, regardless of availability. Callers filter
 /// with `is_available()` and `Config::is_source_enabled`.
 ///
-/// NOTE: archive/appimage/flatpak/snap adapters land in follow-up commits;
-/// this intentionally only lists what exists so far.
+/// NOTE: flatpak/snap adapters land in a follow-up commit; this
+/// intentionally only lists what exists so far.
 pub fn all_sources() -> Vec<Box<dyn PackageSource>> {
-    vec![Box::new(apt::AptSource), Box::new(deb_file::DebFileSource)]
+    vec![
+        Box::new(apt::AptSource),
+        Box::new(deb_file::DebFileSource),
+        Box::new(archive::ArchiveSource::new()),
+        Box::new(appimage::AppImageSource::new()),
+    ]
 }
 
 pub fn source_by_id(id: SourceId) -> Box<dyn PackageSource> {
     match id {
         SourceId::Apt => Box::new(apt::AptSource),
         SourceId::DebFile => Box::new(deb_file::DebFileSource),
+        SourceId::Archive => Box::new(archive::ArchiveSource::new()),
+        SourceId::AppImage => Box::new(appimage::AppImageSource::new()),
         other => unimplemented!("{other} adapter lands in a follow-up commit"),
     }
 }
