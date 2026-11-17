@@ -2,7 +2,7 @@
 //! stable, tab-separated machine output wherever the subcommand supports it.
 
 use crate::error::{Error, Result};
-use crate::process::{self, CommandOutput};
+use crate::process::{self, CommandOutput, LineSink};
 use crate::types::{InstallTarget, OperationOutcome, Package, SourceId, UpdateInfo, UpdateKind};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -29,7 +29,7 @@ pub fn list_installed() -> Result<Vec<Package>> {
         &[
             "list",
             "--app",
-            "--columns=application,name,version,description",
+            "--columns=application,name,version,description,size",
         ],
         Duration::from_secs(30),
     )?;
@@ -52,6 +52,9 @@ fn parse_installed_line(line: &str) -> Option<Package> {
     let name = cols.next().unwrap_or(id).trim();
     let version = cols.next().unwrap_or("").trim();
     let description = cols.next().unwrap_or("").trim();
+    let size_kb = cols
+        .next()
+        .and_then(|s| crate::types::parse_size_to_kb(s.trim()));
     Some(Package {
         id: id.to_string(),
         name: if name.is_empty() {
@@ -63,9 +66,8 @@ fn parse_installed_line(line: &str) -> Option<Package> {
         description: description.to_string(),
         source: Some(SourceId::Flatpak),
         installed: true,
-        available_version: None,
-        is_security_update: false,
-        icon: None,
+        size_kb,
+        ..Package::default()
     })
 }
 
@@ -177,11 +179,14 @@ pub fn list_updates() -> Result<Vec<UpdateInfo>> {
 }
 
 pub fn install_named(name: &str) -> Result<OperationOutcome> {
+    install_named_with(name, None)
+}
+
+pub fn install_named_with(name: &str, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("flatpak")?;
-    let out = process::run_owned(
-        "flatpak",
+    let out = run_maybe_streaming(
         &["install".to_string(), "-y".to_string(), name.to_string()],
-        TIMEOUT,
+        on_line.clone(),
     )?;
     if out.success() {
         return Ok(to_outcome(&format!("flatpak install {name}"), &out));
@@ -189,15 +194,14 @@ pub fn install_named(name: &str) -> Result<OperationOutcome> {
     // Retry pinned to flathub if it exists; covers the common case where the
     // app is available from more than one configured remote.
     if remotes().iter().any(|r| r.eq_ignore_ascii_case("flathub")) {
-        let retry = process::run_owned(
-            "flatpak",
+        let retry = run_maybe_streaming(
             &[
                 "install".to_string(),
                 "-y".to_string(),
                 "flathub".to_string(),
                 name.to_string(),
             ],
-            TIMEOUT,
+            on_line,
         )?;
         return Ok(to_outcome(
             &format!("flatpak install flathub {name}"),
@@ -208,23 +212,77 @@ pub fn install_named(name: &str) -> Result<OperationOutcome> {
 }
 
 pub fn remove_named(id: &str) -> Result<OperationOutcome> {
+    remove_named_with(id, None)
+}
+
+pub fn remove_named_with(id: &str, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("flatpak")?;
-    let out = process::run_owned(
-        "flatpak",
+    let out = run_maybe_streaming(
         &["uninstall".to_string(), "-y".to_string(), id.to_string()],
-        TIMEOUT,
+        on_line,
     )?;
     Ok(to_outcome(&format!("flatpak uninstall {id}"), &out))
 }
 
 pub fn update(id: Option<&str>) -> Result<OperationOutcome> {
+    update_with(id, None)
+}
+
+pub fn update_with(id: Option<&str>, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("flatpak")?;
     let mut args = vec!["update".to_string(), "-y".to_string()];
     if let Some(id) = id {
         args.push(id.to_string());
     }
-    let out = process::run_owned("flatpak", &args, TIMEOUT)?;
-    Ok(to_outcome(&format!("flatpak {}", args.join(" ")), &out))
+    let label = format!("flatpak {}", args.join(" "));
+    let out = run_maybe_streaming(&args, on_line)?;
+    Ok(to_outcome(&label, &out))
+}
+
+fn run_maybe_streaming(args: &[String], on_line: Option<LineSink>) -> Result<CommandOutput> {
+    match on_line {
+        Some(sink) => process::run_owned_streaming("flatpak", args, TIMEOUT, sink),
+        None => process::run_owned("flatpak", args, TIMEOUT),
+    }
+}
+
+/// Full details for one installed app, from `flatpak info`. Flatpak has no
+/// equivalent for an app that isn't installed (no "show me this remote app's
+/// metadata" subcommand with the same richness), so this only works for
+/// already-installed ids.
+pub fn details(id: &str) -> Result<Package> {
+    process::require_binary("flatpak")?;
+    let out = process::run("flatpak", &["info", id], Duration::from_secs(20))?;
+    if !out.success() {
+        return Err(Error::NotFound(id.to_string()));
+    }
+    let mut pkg = Package {
+        id: id.to_string(),
+        name: id.to_string(),
+        source: Some(SourceId::Flatpak),
+        installed: true,
+        ..Package::default()
+    };
+    // First non-blank line is the human-readable title; everything else is
+    // `Key: value` (aligned with spaces, not tabs, unlike `--columns`).
+    let mut lines = out.stdout.lines();
+    if let Some(title) = lines.next().map(str::trim).filter(|s| !s.is_empty()) {
+        pkg.name = title.to_string();
+    }
+    for line in lines {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "Version" => pkg.version = value.to_string(),
+            "License" => pkg.license = Some(value.to_string()),
+            "Installed" => pkg.size_kb = crate::types::parse_size_to_kb(value),
+            "Origin" => pkg.description = format!("From {value}"),
+            _ => {}
+        }
+    }
+    Ok(pkg)
 }
 
 fn to_outcome(label: &str, out: &CommandOutput) -> OperationOutcome {

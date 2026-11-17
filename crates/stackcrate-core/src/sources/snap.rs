@@ -3,7 +3,7 @@
 
 use crate::error::{Error, Result};
 use crate::privilege;
-use crate::process::{self, CommandOutput};
+use crate::process::{self, CommandOutput, LineSink};
 use crate::types::{InstallTarget, OperationOutcome, Package, SourceId, UpdateInfo, UpdateKind};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -40,12 +40,9 @@ fn parse_list_line(line: &str) -> Option<Package> {
         id: name.to_string(),
         name: name.to_string(),
         version,
-        description: String::new(),
         source: Some(SourceId::Snap),
         installed: true,
-        available_version: None,
-        is_security_update: false,
-        icon: None,
+        ..Package::default()
     })
 }
 
@@ -76,10 +73,7 @@ pub fn search(query: &str) -> Result<Vec<Package>> {
                 version: cols.get(1).copied().unwrap_or("").to_string(),
                 description: cols.get(4).copied().unwrap_or("").to_string(),
                 source: Some(SourceId::Snap),
-                installed: false,
-                available_version: None,
-                is_security_update: false,
-                icon: None,
+                ..Package::default()
             })
         })
         .take(100)
@@ -122,27 +116,99 @@ pub fn list_updates() -> Result<Vec<UpdateInfo>> {
 }
 
 pub fn install_named(name: &str) -> Result<OperationOutcome> {
+    install_named_with(name, None)
+}
+
+pub fn install_named_with(name: &str, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("snap")?;
-    let out =
-        privilege::run_privileged("snap", &["install".to_string(), name.to_string()], TIMEOUT)?;
+    let args = vec!["install".to_string(), name.to_string()];
+    let out = run_privileged_maybe_streaming(&args, on_line)?;
     Ok(to_outcome(&format!("snap install {name}"), &out))
 }
 
 pub fn remove_named(name: &str) -> Result<OperationOutcome> {
+    remove_named_with(name, None)
+}
+
+pub fn remove_named_with(name: &str, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("snap")?;
-    let out =
-        privilege::run_privileged("snap", &["remove".to_string(), name.to_string()], TIMEOUT)?;
+    let args = vec!["remove".to_string(), name.to_string()];
+    let out = run_privileged_maybe_streaming(&args, on_line)?;
     Ok(to_outcome(&format!("snap remove {name}"), &out))
 }
 
 pub fn update(id: Option<&str>) -> Result<OperationOutcome> {
+    update_with(id, None)
+}
+
+pub fn update_with(id: Option<&str>, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     process::require_binary("snap")?;
     let mut args = vec!["refresh".to_string()];
     if let Some(name) = id {
         args.push(name.to_string());
     }
-    let out = privilege::run_privileged("snap", &args, TIMEOUT)?;
-    Ok(to_outcome(&format!("snap {}", args.join(" ")), &out))
+    let label = format!("snap {}", args.join(" "));
+    let out = run_privileged_maybe_streaming(&args, on_line)?;
+    Ok(to_outcome(&label, &out))
+}
+
+fn run_privileged_maybe_streaming(
+    args: &[String],
+    on_line: Option<LineSink>,
+) -> Result<CommandOutput> {
+    match on_line {
+        Some(sink) => privilege::run_privileged_streaming("snap", args, TIMEOUT, sink),
+        None => privilege::run_privileged("snap", args, TIMEOUT),
+    }
+}
+
+/// Full details for one snap (installed or not) via `snap info`.
+pub fn details(name: &str) -> Result<Package> {
+    process::require_binary("snap")?;
+    let out = process::run("snap", &["info", name], Duration::from_secs(20))?;
+    if !out.success() {
+        return Err(Error::NotFound(name.to_string()));
+    }
+    let mut pkg = Package {
+        id: name.to_string(),
+        name: name.to_string(),
+        source: Some(SourceId::Snap),
+        ..Package::default()
+    };
+    for line in out.stdout.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "summary" => pkg.description = value.to_string(),
+            "publisher" => pkg.maintainer = Some(value.trim_end_matches('*').to_string()),
+            "contact" => {
+                if pkg.homepage.is_none() {
+                    pkg.homepage = Some(value.to_string());
+                }
+            }
+            "license" if value != "unset" => pkg.license = Some(value.to_string()),
+            "installed" => {
+                pkg.installed = true;
+                // "installed:          1.0            (5) 4096B base"
+                let fields: Vec<&str> = value.split_whitespace().collect();
+                if let Some(version) = fields.first() {
+                    pkg.version = version.to_string();
+                }
+                if let Some(size) = fields.iter().find(|f| {
+                    f.ends_with('B')
+                        && f.trim_end_matches(['B', 'K', 'M', 'G', 'i'])
+                            .parse::<f64>()
+                            .is_ok()
+                }) {
+                    pkg.size_kb = crate::types::parse_size_to_kb(size);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(pkg)
 }
 
 fn to_outcome(label: &str, out: &CommandOutput) -> OperationOutcome {

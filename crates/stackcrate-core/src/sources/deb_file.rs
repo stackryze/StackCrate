@@ -7,7 +7,7 @@
 
 use crate::error::{Error, Result};
 use crate::privilege;
-use crate::process::{self, CommandOutput};
+use crate::process::{self, CommandOutput, LineSink};
 use crate::sources::apt;
 use crate::types::{InstallTarget, OperationOutcome, Package, SourceId, UpdateInfo};
 use std::path::Path;
@@ -28,6 +28,9 @@ pub struct DebMetadata {
     pub package: String,
     pub version: String,
     pub description: String,
+    pub size_kb: Option<u64>,
+    pub maintainer: Option<String>,
+    pub homepage: Option<String>,
 }
 
 /// Read control metadata out of a `.deb` without installing it.
@@ -54,6 +57,12 @@ pub fn inspect(path: &Path) -> Result<DebMetadata> {
             meta.version = value.trim().to_string();
         } else if let Some(value) = trimmed.strip_prefix("Description:") {
             meta.description = value.trim().to_string();
+        } else if let Some(value) = trimmed.strip_prefix("Installed-Size:") {
+            meta.size_kb = value.trim().parse().ok();
+        } else if let Some(value) = trimmed.strip_prefix("Maintainer:") {
+            meta.maintainer = Some(value.trim().to_string());
+        } else if let Some(value) = trimmed.strip_prefix("Homepage:") {
+            meta.homepage = Some(value.trim().to_string());
         }
     }
     if meta.package.is_empty() {
@@ -66,6 +75,10 @@ pub fn inspect(path: &Path) -> Result<DebMetadata> {
 }
 
 pub fn install_file(path: &Path) -> Result<OperationOutcome> {
+    install_file_with(path, None)
+}
+
+pub fn install_file_with(path: &Path, on_line: Option<LineSink>) -> Result<OperationOutcome> {
     if !path.exists() {
         return Err(Error::InvalidPath(format!(
             "{} does not exist",
@@ -75,11 +88,16 @@ pub fn install_file(path: &Path) -> Result<OperationOutcome> {
     process::require_binary("dpkg")?;
     let meta = inspect(path)?;
 
-    let dpkg_out = privilege::run_privileged(
-        "dpkg",
-        &["-i".to_string(), path.to_string_lossy().to_string()],
-        Duration::from_secs(300),
-    )?;
+    let dpkg_args = vec!["-i".to_string(), path.to_string_lossy().to_string()];
+    let dpkg_out = match &on_line {
+        Some(sink) => privilege::run_privileged_streaming(
+            "dpkg",
+            &dpkg_args,
+            Duration::from_secs(300),
+            sink.clone(),
+        )?,
+        None => privilege::run_privileged("dpkg", &dpkg_args, Duration::from_secs(300))?,
+    };
 
     let mut log = format!("$ dpkg -i {}\n{}\n", path.display(), dpkg_out.combined());
 
@@ -89,7 +107,15 @@ pub fn install_file(path: &Path) -> Result<OperationOutcome> {
         process::require_binary("apt-get")?;
         let mut args = vec!["install".to_string(), "-f".to_string()];
         args.extend(NONINTERACTIVE_APT_FLAGS.iter().map(|s| s.to_string()));
-        let fix_out = privilege::run_privileged("apt-get", &args, Duration::from_secs(300))?;
+        let fix_out = match &on_line {
+            Some(sink) => privilege::run_privileged_streaming(
+                "apt-get",
+                &args,
+                Duration::from_secs(300),
+                sink.clone(),
+            )?,
+            None => privilege::run_privileged("apt-get", &args, Duration::from_secs(300))?,
+        };
         log.push_str(&format!(
             "$ apt-get install -f -y\n{}\n",
             fix_out.combined()
