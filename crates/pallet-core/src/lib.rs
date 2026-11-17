@@ -6,6 +6,7 @@ pub mod error;
 pub mod privilege;
 pub mod process;
 pub mod registry;
+pub mod sources;
 pub mod types;
 pub mod verify;
 
