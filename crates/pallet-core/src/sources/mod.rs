@@ -2,6 +2,8 @@ pub mod apt;
 pub mod appimage;
 pub mod archive;
 pub mod deb_file;
+pub mod flatpak;
+pub mod snap;
 pub mod sniff;
 
 use crate::error::{Error, Result};
@@ -32,15 +34,14 @@ pub trait PackageSource: Send + Sync {
 
 /// Construct every known adapter, regardless of availability. Callers filter
 /// with `is_available()` and `Config::is_source_enabled`.
-///
-/// NOTE: flatpak/snap adapters land in a follow-up commit; this
-/// intentionally only lists what exists so far.
 pub fn all_sources() -> Vec<Box<dyn PackageSource>> {
     vec![
         Box::new(apt::AptSource),
         Box::new(deb_file::DebFileSource),
         Box::new(archive::ArchiveSource::new()),
         Box::new(appimage::AppImageSource::new()),
+        Box::new(flatpak::FlatpakSource),
+        Box::new(snap::SnapSource),
     ]
 }
 
@@ -50,7 +51,8 @@ pub fn source_by_id(id: SourceId) -> Box<dyn PackageSource> {
         SourceId::DebFile => Box::new(deb_file::DebFileSource),
         SourceId::Archive => Box::new(archive::ArchiveSource::new()),
         SourceId::AppImage => Box::new(appimage::AppImageSource::new()),
-        other => unimplemented!("{other} adapter lands in a follow-up commit"),
+        SourceId::Flatpak => Box::new(flatpak::FlatpakSource),
+        SourceId::Snap => Box::new(snap::SnapSource),
     }
 }
 
