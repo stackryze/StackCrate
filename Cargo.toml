@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pallet-core",
     "crates/pallet-cli",
+    "crates/pallet-daemon",
 ]
 
 [workspace.package]
