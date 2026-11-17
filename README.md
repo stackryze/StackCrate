@@ -1,5 +1,10 @@
 # Pallet
 
+[![CI](https://github.com/stackryze/StackCrate/actions/workflows/ci.yml/badge.svg)](https://github.com/stackryze/StackCrate/actions/workflows/ci.yml)
+[![Release](https://github.com/stackryze/StackCrate/actions/workflows/release.yml/badge.svg)](https://github.com/stackryze/StackCrate/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/stackryze/StackCrate)](https://github.com/stackryze/StackCrate/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **One package manager for every way software ends up on your Linux box.**
 
 Pallet is a native, Rust-based package manager for Debian/Ubuntu systems that
