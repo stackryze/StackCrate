@@ -118,8 +118,8 @@ Section: admin
 Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: stackcrate (= $VERSION), libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
-Recommends: desktop-file-utils
+Depends: libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
+Recommends: stackcrate (= $VERSION), desktop-file-utils
 Homepage: $HOMEPAGE
 Description: GTK4/libadwaita desktop app for StackCrate
  Search, installed-packages, and pending-updates views, plus a
