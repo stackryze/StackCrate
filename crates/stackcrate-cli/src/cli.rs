@@ -19,6 +19,12 @@ pub struct Cli {
     /// Print extra diagnostic logging.
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// Print machine-readable JSON instead of formatted text, for scripting.
+    /// Supported by the read-only commands (search, list, status, history,
+    /// show); ignored elsewhere.
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -76,7 +82,44 @@ pub enum Command {
         refresh: bool,
     },
 
-    /// List things: installed packages, pending updates, or active sources.
+    /// Remove apt packages that were pulled in as dependencies and are no
+    /// longer required by anything still installed.
+    Autoremove,
+
+    /// Clear StackCrate's own download cache (`~/.cache/stackcrate/downloads`,
+    /// used when installing from a URL). Nothing installed is affected.
+    Clean,
+
+    /// Restore the most recent snapshot of a manually-installed archive or
+    /// AppImage, taken automatically the last time it was overwritten by a
+    /// newer install.
+    Rollback {
+        /// Must be `archive` or `appimage`; other sources manage their own
+        /// versions and don't need this.
+        source: SourceId,
+        id: String,
+    },
+
+    /// Check that StackCrate's pieces are healthy: which sources are
+    /// available, whether the background daemon is reachable, and whether
+    /// unattended privilege escalation is configured.
+    Doctor,
+
+    /// Show why a package is installed and what currently depends on it
+    /// (apt only; other sources don't track this).
+    Explain { source: SourceId, id: String },
+
+    /// Show a package's upstream/Debian changelog (apt only; needs network
+    /// access unless a local copy is already on disk).
+    Changelog { name: String },
+
+    /// Show full details for one package: size, maintainer, homepage,
+    /// license, and whether it's installed, beyond what `search`/`list`
+    /// carry.
+    Show { source: SourceId, id: String },
+
+    /// List things: installed packages, pending updates, active sources, or
+    /// disk space used by each source's installed packages.
     List {
         #[command(subcommand)]
         what: ListCommand,
@@ -92,7 +135,15 @@ pub enum Command {
     },
 
     /// Hold a package back from automatic/bulk updates.
-    Pin { source: SourceId, id: String },
+    Pin {
+        source: SourceId,
+        id: String,
+        /// Pin to this exact version (recorded for display; apt additionally
+        /// enforces the hold itself via `apt-mark hold`, independent of the
+        /// version string).
+        #[arg(long)]
+        version: Option<String>,
+    },
 
     /// Remove a hold placed with `pin`.
     Unpin { source: SourceId, id: String },
@@ -108,6 +159,11 @@ pub enum Command {
         #[command(subcommand)]
         what: ConfigCommand,
     },
+
+    /// Print a shell completion script to stdout, e.g.
+    /// `crate completions bash >> ~/.bashrc` (packaged installs already ship
+    /// these pre-generated; this is for anyone building/installing another way).
+    Completions { shell: clap_complete::Shell },
 }
 
 #[derive(Subcommand, Debug)]
@@ -121,6 +177,8 @@ pub enum ListCommand {
     Updates,
     /// Which adapters are available on this machine.
     Sources,
+    /// Disk space used by each source's installed packages.
+    DiskUsage,
 }
 
 #[derive(Subcommand, Debug)]

@@ -11,13 +11,29 @@ description = "Command-line interface for StackCrate."
 name = "crate"
 path = "src/main.rs"
 
+# Internal build-time helpers (not installed for end users; used by
+# packaging/debian/build-deb.sh and the release workflow to pre-generate
+# static man pages and shell completions). `crate completions <shell>` is
+# also available directly for anyone building/installing some other way.
+[[bin]]
+name = "gen-man"
+path = "src/bin/gen-man.rs"
+
+[[bin]]
+name = "gen-completions"
+path = "src/bin/gen-completions.rs"
+
 [dependencies]
 anyhow = "1.0.104"
 chrono = "0.4.45"
 clap = { version = "4.6.8", features = ["derive", "wrap_help"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 colored = "3.1.1"
 dirs-next = "2.0.0"
-stackcrate-core = { version = "0.1.0", path = "../stackcrate-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+stackcrate-core = { path = "../stackcrate-core" }
 toml = "1.2.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -14,15 +14,28 @@ use std::time::Duration;
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub fn search(engine: &Engine, query: &str, source: Option<SourceId>) -> Result<()> {
+pub fn search(engine: &Engine, query: &str, source: Option<SourceId>, json: bool) -> Result<()> {
     match source {
         Some(id) => {
-            let results = sources::source_by_id(id)
-                .search(query)
+            let results = engine
+                .search_one(id, query)
                 .with_context(|| format!("searching {id}"))?;
-            output::print_packages(&results);
+            if json {
+                output::print_json(&results);
+            } else {
+                output::print_packages(&results);
+            }
         }
         None => {
+            if json {
+                let all: Vec<_> = engine
+                    .search_all(query)
+                    .into_iter()
+                    .flat_map(|(_, result)| result.unwrap_or_default())
+                    .collect();
+                output::print_json(&all);
+                return Ok(());
+            }
             for (id, result) in engine.search_all(query) {
                 match result {
                     Ok(pkgs) if !pkgs.is_empty() => output::print_packages(&pkgs),
@@ -78,6 +91,7 @@ pub fn install(
                 name,
                 icon,
                 no_launcher,
+                ..Default::default()
             };
             sources::appimage::install_appimage(path, &opts)?
         }
@@ -150,6 +164,21 @@ pub fn remove(engine: &Engine, id: &str, source: Option<SourceId>, assume_yes: b
         Some(s) => s,
         None => find_owning_source(engine, id)?,
     };
+
+    if source_id == SourceId::Apt {
+        let extra = sources::apt::removal_preview(id).unwrap_or_default();
+        if !extra.is_empty() {
+            println!(
+                "{} removing {id} will also remove {} other package(s):",
+                "Note:".yellow().bold(),
+                extra.len()
+            );
+            for name in &extra {
+                println!("  {name}");
+            }
+        }
+    }
+
     if !output::confirm(&format!("Remove {id} ({source_id})?"), assume_yes) {
         println!("{}", "Aborted.".dimmed());
         return Ok(());
@@ -233,13 +262,162 @@ pub fn update(
     Ok(())
 }
 
-pub fn list(engine: &Engine, what: &ListCommand) -> Result<()> {
+pub fn autoremove(engine: &Engine, assume_yes: bool) -> Result<()> {
+    let orphans = engine.list_orphans()?;
+    if orphans.is_empty() {
+        output::print_success("Nothing to remove; no orphaned packages found.");
+        return Ok(());
+    }
+    output::print_packages(&orphans);
+    let total_kb: u64 = orphans.iter().filter_map(|p| p.size_kb).sum();
+    if total_kb > 0 {
+        println!(
+            "\nThis will free about {}.",
+            stackcrate_core::types::format_size_kb(total_kb).green()
+        );
+    }
+    if !output::confirm(
+        &format!("Remove these {} package(s)?", orphans.len()),
+        assume_yes,
+    ) {
+        println!("{}", "Aborted.".dimmed());
+        return Ok(());
+    }
+    let outcome = engine.autoremove()?;
+    report(&outcome);
+    log_history(engine, SourceId::Apt, "autoremove", "(orphans)", &outcome)?;
+    if !outcome.success {
+        bail!("autoremove failed");
+    }
+    Ok(())
+}
+
+pub fn clean() -> Result<()> {
+    let dir = stackcrate_core::config::Paths::cache_dir().join("downloads");
+    if !dir.exists() {
+        output::print_success("Nothing to clean; the download cache is already empty.");
+        return Ok(());
+    }
+    let freed_kb = dir_size_kb(&dir);
+    std::fs::remove_dir_all(&dir)?;
+    std::fs::create_dir_all(&dir)?;
+    output::print_success(&format!(
+        "Removed cached downloads ({}).",
+        stackcrate_core::types::format_size_kb(freed_kb)
+    ));
+    Ok(())
+}
+
+fn dir_size_kb(dir: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let bytes: u64 = entries
+        .flatten()
+        .map(|entry| entry.metadata().map(|m| m.len()).unwrap_or(0))
+        .sum();
+    bytes / 1024
+}
+
+pub fn rollback(engine: &Engine, source: SourceId, id: &str, assume_yes: bool) -> Result<()> {
+    let snapshots = engine.list_snapshots(source, id)?;
+    let Some(latest) = snapshots.first() else {
+        bail!("no snapshot available to roll back to for '{id}' ({source})");
+    };
+    println!(
+        "Will restore {} {} from the snapshot taken {}.",
+        latest.manual_install.name,
+        latest.manual_install.version,
+        latest
+            .created_at
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+    );
+    if !output::confirm("Roll back to this snapshot?", assume_yes) {
+        println!("{}", "Aborted.".dimmed());
+        return Ok(());
+    }
+    let outcome = engine.rollback(source, id)?;
+    report(&outcome);
+    log_history(engine, source, "rollback", id, &outcome)?;
+    if !outcome.success {
+        bail!("rollback failed");
+    }
+    Ok(())
+}
+
+pub fn doctor(engine: &Engine, json: bool) -> Result<()> {
+    let checks = engine.doctor();
+    if json {
+        output::print_json(&checks);
+    } else {
+        output::print_doctor(&checks);
+    }
+    if checks.iter().any(|c| !c.ok) {
+        bail!("one or more checks failed");
+    }
+    Ok(())
+}
+
+pub fn explain(engine: &Engine, source: SourceId, id: &str, json: bool) -> Result<()> {
+    let info = engine.explain(source, id)?;
+    if json {
+        output::print_json(&info);
+        return Ok(());
+    }
+    match info.manually_installed {
+        Some(true) => {
+            println!("{id} was explicitly installed (not just pulled in as a dependency).")
+        }
+        Some(false) => {
+            println!("{id} was installed automatically, as a dependency of something else.")
+        }
+        None => println!(
+            "{id}: installation reason unknown ({source} may not track this, or it isn't installed)."
+        ),
+    }
+    if info.required_by.is_empty() {
+        println!("Nothing currently installed depends on it.");
+    } else {
+        println!("Required by:");
+        for dep in &info.required_by {
+            println!("  {dep}");
+        }
+    }
+    Ok(())
+}
+
+pub fn changelog(name: &str) -> Result<()> {
+    let text = stackcrate_core::sources::apt::changelog(name)?;
+    print!("{text}");
+    Ok(())
+}
+
+pub fn show(engine: &Engine, source: SourceId, id: &str, json: bool) -> Result<()> {
+    let pkg = engine.package_details(source, id)?;
+    if json {
+        output::print_json(&pkg);
+    } else {
+        output::print_package_details(&pkg);
+    }
+    Ok(())
+}
+
+pub fn list(engine: &Engine, what: &ListCommand, json: bool) -> Result<()> {
     match what {
         ListCommand::Installed { source } => {
             let sources_to_query: Vec<Box<dyn sources::PackageSource>> = match source {
                 Some(id) => vec![sources::source_by_id(*id)],
                 None => engine.active_sources(),
             };
+            if json {
+                let mut all = Vec::new();
+                for adapter in sources_to_query {
+                    all.extend(adapter.list_installed().unwrap_or_default());
+                }
+                output::print_json(&all);
+                return Ok(());
+            }
             for adapter in sources_to_query {
                 match adapter.list_installed() {
                     Ok(pkgs) => output::print_packages(&pkgs),
@@ -248,9 +426,32 @@ pub fn list(engine: &Engine, what: &ListCommand) -> Result<()> {
             }
         }
         ListCommand::Updates => {
-            output::print_updates(&engine.registry.cached_updates()?);
+            let updates = engine.registry.cached_updates()?;
+            if json {
+                output::print_json(&updates);
+            } else {
+                output::print_updates(&updates);
+            }
         }
         ListCommand::Sources => {
+            if json {
+                #[derive(serde::Serialize)]
+                struct SourceStatus {
+                    source: SourceId,
+                    available: bool,
+                    enabled: bool,
+                }
+                let statuses: Vec<_> = SourceId::all()
+                    .iter()
+                    .map(|source| SourceStatus {
+                        source: *source,
+                        available: sources::source_by_id(*source).is_available(),
+                        enabled: engine.config.is_source_enabled(*source),
+                    })
+                    .collect();
+                output::print_json(&statuses);
+                return Ok(());
+            }
             for source in SourceId::all() {
                 let adapter = sources::source_by_id(*source);
                 let available = adapter.is_available();
@@ -265,11 +466,19 @@ pub fn list(engine: &Engine, what: &ListCommand) -> Result<()> {
                 println!("{:<10} {}", source.as_str(), mark);
             }
         }
+        ListCommand::DiskUsage => {
+            let entries = engine.disk_usage_summary();
+            if json {
+                output::print_json(&entries);
+            } else {
+                output::print_disk_usage(&entries);
+            }
+        }
     }
     Ok(())
 }
 
-pub fn status(engine: &Engine) -> Result<()> {
+pub fn status(engine: &Engine, json: bool) -> Result<()> {
     match stackcrate_core::ipc::request_blocking(
         &stackcrate_core::ipc::Request::Status,
         IPC_TIMEOUT,
@@ -279,7 +488,7 @@ pub fn status(engine: &Engine) -> Result<()> {
             update_count,
             security_count,
         }) => {
-            print_status(last_checked_at, update_count, security_count, true);
+            print_status(last_checked_at, update_count, security_count, true, json);
         }
         _ => {
             let updates = engine.registry.cached_updates()?;
@@ -292,10 +501,19 @@ pub fn status(engine: &Engine) -> Result<()> {
                 updates.len(),
                 security,
                 false,
+                json,
             );
         }
     }
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct StatusJson {
+    daemon_running: bool,
+    last_checked_at: Option<chrono::DateTime<chrono::Utc>>,
+    update_count: usize,
+    security_count: usize,
 }
 
 fn print_status(
@@ -303,7 +521,17 @@ fn print_status(
     update_count: usize,
     security_count: usize,
     daemon_running: bool,
+    json: bool,
 ) {
+    if json {
+        output::print_json(&StatusJson {
+            daemon_running,
+            last_checked_at,
+            update_count,
+            security_count,
+        });
+        return;
+    }
     println!(
         "daemon:        {}",
         if daemon_running {
@@ -330,8 +558,12 @@ fn print_status(
     }
 }
 
-pub fn history(engine: &Engine, limit: u32) -> Result<()> {
+pub fn history(engine: &Engine, limit: u32, json: bool) -> Result<()> {
     let entries = engine.registry.recent_history(limit)?;
+    if json {
+        output::print_json(&entries);
+        return Ok(());
+    }
     if entries.is_empty() {
         println!("{}", "(no history yet)".dimmed());
         return Ok(());
@@ -361,16 +593,39 @@ fn print_history_entry(entry: &HistoryEntry) {
     );
 }
 
-pub fn pin(engine: &Engine, source: SourceId, id: &str) -> Result<()> {
-    engine.registry.pin(source, id)?;
-    output::print_success(&format!(
-        "Pinned {id} ({source}); it will be skipped by bulk updates."
-    ));
+pub fn pin(engine: &Engine, source: SourceId, id: &str, version: Option<String>) -> Result<()> {
+    engine.registry.pin(source, id, version.as_deref())?;
+    if source == SourceId::Apt {
+        let outcome = stackcrate_core::sources::apt::hold(id)?;
+        if !outcome.success {
+            output::print_failure(&format!(
+                "recorded the pin, but `apt-mark hold {id}` failed: {}",
+                outcome.summary
+            ));
+        }
+    }
+    match version {
+        Some(v) => output::print_success(&format!(
+            "Pinned {id} ({source}) to version {v}; it will be skipped by bulk updates."
+        )),
+        None => output::print_success(&format!(
+            "Pinned {id} ({source}); it will be skipped by bulk updates."
+        )),
+    }
     Ok(())
 }
 
 pub fn unpin(engine: &Engine, source: SourceId, id: &str) -> Result<()> {
     engine.registry.unpin(source, id)?;
+    if source == SourceId::Apt {
+        let outcome = stackcrate_core::sources::apt::unhold(id)?;
+        if !outcome.success {
+            output::print_failure(&format!(
+                "removed the pin, but `apt-mark unhold {id}` failed: {}",
+                outcome.summary
+            ));
+        }
+    }
     output::print_success(&format!("Unpinned {id} ({source})."));
     Ok(())
 }
@@ -403,24 +658,10 @@ fn setup_sudoers(assume_yes: bool) -> Result<()> {
 }
 
 fn setup_daemon(assume_yes: bool) -> Result<()> {
-    let daemon_binary = locate_daemon_binary()?;
-    let unit_dir = dirs_next_config_home().join("systemd/user");
-    std::fs::create_dir_all(&unit_dir)?;
-    let unit_path = unit_dir.join("stackcrate-daemon.service");
-    let unit_contents = format!(
-        "[Unit]\n\
-         Description=StackCrate background update monitor\n\
-         After=network-online.target\n\
-         Wants=network-online.target\n\n\
-         [Service]\n\
-         ExecStart={}\n\
-         Restart=on-failure\n\
-         RestartSec=5\n\n\
-         [Install]\n\
-         WantedBy=default.target\n",
-        daemon_binary.display()
-    );
+    let daemon_binary = stackcrate_core::setup::locate_daemon_binary()?;
+    let unit_path = stackcrate_core::setup::daemon_unit_path();
     println!("Writing {}", unit_path.display());
+    println!("  ExecStart={}", daemon_binary.display());
     if !output::confirm(
         "Install and enable the stackcrate-daemon user service?",
         assume_yes,
@@ -428,43 +669,11 @@ fn setup_daemon(assume_yes: bool) -> Result<()> {
         println!("{}", "Aborted.".dimmed());
         return Ok(());
     }
-    std::fs::write(&unit_path, unit_contents)?;
-    run_systemctl(&["--user", "daemon-reload"])?;
-    run_systemctl(&["--user", "enable", "--now", "stackcrate-daemon.service"])?;
+    stackcrate_core::setup::install_and_start_daemon_unit()?;
     output::print_success(
         "stackcrate-daemon is enabled and running (systemctl --user status stackcrate-daemon)",
     );
     Ok(())
-}
-
-fn run_systemctl(args: &[&str]) -> Result<()> {
-    let status = std::process::Command::new("systemctl")
-        .args(args)
-        .status()?;
-    if !status.success() {
-        bail!("systemctl {} failed", args.join(" "));
-    }
-    Ok(())
-}
-
-fn locate_daemon_binary() -> Result<PathBuf> {
-    if let Some(path) = stackcrate_core::process::which("stackcrate-daemon") {
-        return Ok(path);
-    }
-    let own = std::env::current_exe().context("could not determine this binary's own path")?;
-    if let Some(dir) = own.parent() {
-        let candidate = dir.join("stackcrate-daemon");
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    bail!(
-        "could not find the stackcrate-daemon binary; install it alongside crate or put it on PATH"
-    )
-}
-
-fn dirs_next_config_home() -> PathBuf {
-    dirs_next::config_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn config(what: &ConfigCommand) -> Result<()> {
@@ -513,9 +722,19 @@ fn apply_config_set(config: &mut Config, key: &str, value: &str) -> Result<()> {
             config.require_checksum_for_archive =
                 value.parse().context("expected true or false")?;
         }
+        "require-ac-power-for-auto-update" => {
+            config.require_ac_power_for_auto_update =
+                value.parse().context("expected true or false")?;
+        }
         other => bail!("unknown config key '{other}'"),
     }
     Ok(())
+}
+
+pub fn completions(shell: clap_complete::Shell) {
+    use clap::CommandFactory;
+    let mut cmd = crate::cli::Cli::command();
+    clap_complete::generate(shell, &mut cmd, "crate", &mut std::io::stdout());
 }
 
 fn find_owning_source(engine: &Engine, id: &str) -> Result<SourceId> {

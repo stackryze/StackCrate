@@ -29,13 +29,22 @@ fn main() {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    // `completions` needs no engine/registry at all, and should work even in
+    // a completely fresh environment (e.g. piped straight into a shell
+    // rc file during provisioning), so handle it before `Engine::open`.
+    if let Command::Completions { shell } = cli.command {
+        commands::completions(shell);
+        return Ok(());
+    }
+
     // `setup` runs before the data dirs / registry necessarily exist in a
     // fully set-up state, but `Engine::open` creates them, so it's safe to
     // always open it first.
     let engine = stackcrate_core::Engine::open()?;
+    let json = cli.json;
 
     match cli.command {
-        Command::Search { query, source } => commands::search(&engine, &query, source),
+        Command::Search { query, source } => commands::search(&engine, &query, source, json),
         Command::Install {
             target,
             source,
@@ -61,12 +70,24 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             source,
             refresh,
         } => commands::update(&engine, id, source, refresh, cli.yes),
-        Command::List { what } => commands::list(&engine, &what),
-        Command::Status => commands::status(&engine),
-        Command::History { limit } => commands::history(&engine, limit),
-        Command::Pin { source, id } => commands::pin(&engine, source, &id),
+        Command::Autoremove => commands::autoremove(&engine, cli.yes),
+        Command::Clean => commands::clean(),
+        Command::Rollback { source, id } => commands::rollback(&engine, source, &id, cli.yes),
+        Command::Doctor => commands::doctor(&engine, json),
+        Command::Explain { source, id } => commands::explain(&engine, source, &id, json),
+        Command::Changelog { name } => commands::changelog(&name),
+        Command::Show { source, id } => commands::show(&engine, source, &id, json),
+        Command::List { what } => commands::list(&engine, &what, json),
+        Command::Status => commands::status(&engine, json),
+        Command::History { limit } => commands::history(&engine, limit, json),
+        Command::Pin {
+            source,
+            id,
+            version,
+        } => commands::pin(&engine, source, &id, version),
         Command::Unpin { source, id } => commands::unpin(&engine, source, &id),
         Command::Setup { what } => commands::setup(&what, cli.yes),
         Command::Config { what } => commands::config(&what),
+        Command::Completions { .. } => unreachable!("handled above"),
     }
 }
