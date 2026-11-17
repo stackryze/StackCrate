@@ -87,7 +87,7 @@ several small, logically-grouped commits over one large one.
    push the tag (`git push origin vX.Y.Z`).
 4. `.github/workflows/release.yml` takes it from there: it fails closed if
    the tag doesn't match `Cargo.toml`'s version, runs the full test/lint
-   suite, builds release binaries, builds `crate`/`stackcrate-gui` `.deb`
+   suite, builds release binaries, builds `stackcrate`/`stackcrate-gui` `.deb`
    packages (`packaging/debian/build-deb.sh`), and publishes a GitHub
    Release with the binaries, `.deb`s, a tarball, and `SHA256SUMS`, using
    that version's `CHANGELOG.md` section as the release notes.

@@ -37,7 +37,7 @@ intentionally not here yet).
   updates, a header-bar "install a local file" action, and settings.
 - Packaging: a `systemd --user` service unit, a polkit policy for clearer
   `pkexec` prompts, a `.desktop` launcher, `install.sh`, and `.deb` packages
-  (`crate`, `stackcrate-gui`) built and verified with `lintian` and a real
+  (`stackcrate`, `stackcrate-gui`) built and verified with `lintian` and a real
   `apt-get install` in a throwaway container.
 
 [0.1.0]: https://github.com/stackryze/StackCrate/releases/tag/v0.1.0
