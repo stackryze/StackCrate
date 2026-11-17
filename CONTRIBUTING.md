@@ -79,7 +79,12 @@ several small, logically-grouped commits over one large one.
 
 1. Update `workspace.package.version` in the root `Cargo.toml` (every crate
    inherits it) and run `cargo check --workspace --exclude stackcrate-gui` once
-   so `Cargo.lock` picks up the bump.
+   so `Cargo.lock` picks up the bump. (The CLI/daemon/GUI's `stackcrate-core`
+   dependency is a bare `{ path = "../stackcrate-core" }` with no version
+   requirement, specifically so this is the *only* version to update --
+   earlier releases pinned a version there too, which `cargo check` then
+   rejected on every minor bump since Cargo treats `0.x` minor versions as
+   breaking by default.)
 2. Add a new `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (and its
    `[X.Y.Z]: .../releases/tag/vX.Y.Z` link at the bottom), following
    [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).

@@ -47,6 +47,14 @@ going through the trait object. Every other operation (search, list,
 remove, update, and install for apt/deb-file/flatpak/snap) goes through the
 trait so callers can treat `Box<dyn PackageSource>` uniformly.
 
+Several adapters also expose extra, adapter-specific free functions beyond
+the trait, called directly by `Engine`/CLI/GUI where relevant rather than
+forcing every adapter to implement a method most of them have no equivalent
+for: `sources::apt::details/changelog/removal_preview/list_autoremovable/
+autoremove/hold/unhold/explain`, and streaming (`*_with`/`*_streaming`)
+variants of install/remove/update on apt/flatpak/snap/deb-file for callers
+that want live output (see "Streaming output" below).
+
 Adding a new source (phase 2: dnf, zypper, pacman+AUR, apk, xbps, eopkg,
 Homebrew, npm, pipx — see [ROADMAP.md](ROADMAP.md)) means: add a
 `SourceId` variant, a module under `sources/`, implement the trait, and
@@ -106,11 +114,101 @@ daemon, and GUI can all touch it concurrently without their own locking):
   `crate status` are instant reads instead of re-querying every source.
 - `history` — an audit log of every install/remove/update, including
   unattended ones the daemon performed.
-- `pins` — packages held back from bulk/auto updates.
+- `pins` — packages held back from bulk/auto updates, optionally to a
+  specific version string (`pinned_version`); apt pins are additionally
+  enforced at the OS level via `apt-mark hold`, so a plain `apt upgrade` run
+  outside StackCrate respects them too, not just StackCrate's own bulk update.
+- `snapshots` — a previous on-disk state of a manually-tracked install
+  (archive or AppImage), saved right before it was overwritten; see
+  "Rollback" below.
 - `meta` — small key/value bits: last-checked timestamp, and a fingerprint
   of the last update set a notification was actually sent for (so the
   notification doesn't repeat every single check interval for the same
   unchanged set of pending updates).
+
+Schema changes for databases created before a column/table existed go
+through a small idempotent `migrate()` run after `CREATE TABLE IF NOT
+EXISTS`, e.g. `pins.pinned_version` was added after v0.1.x; `ALTER TABLE
+... ADD COLUMN` has no `IF NOT EXISTS` in SQLite, so `migrate()` just
+ignores the specific "duplicate column name" failure on a database that
+already has it.
+
+## Rollback (`crates/stackcrate-core/src/snapshot.rs`)
+
+apt, Flatpak, and Snap each already have their own rollback story (apt's
+package cache, Flatpak's commit history, snap's revisions); archive and
+AppImage installs don't, since StackCrate is itself the only thing tracking
+them. So for those two sources specifically: before an install overwrites
+an existing one (a manual reinstall, or an AppImage self-update), the
+current on-disk artifact is moved — not copied — into a dated snapshot
+directory (`Paths::snapshot_dir()`, deliberately under the same
+`~/.local/opt/stackcrate` tree as the live install directories, so this is
+always a same-filesystem rename, never a cross-filesystem copy), and a full
+copy of its registry row is stored alongside it as JSON, so restoring never
+has to regenerate a desktop file, icon, or exec path by guesswork.
+
+`crate rollback <archive|appimage> <id>` restores the most recent snapshot.
+Every destructive change (install-over-existing, and rollback itself)
+snapshots whatever it's about to replace first, so a rollback is itself
+always undoable by rolling back again — a symmetric stack, not a one-way
+operation.
+
+## Streaming output (`process::run_owned_streaming`, `LineSink`)
+
+Every adapter's install/remove/update historically returned only once the
+underlying command finished, with the full combined stdout/stderr attached
+to the result — fine for the CLI (which can just print it after the fact
+with `--verbose`/`STACKCRATE_VERBOSE`), but it meant the GUI's only option
+was an opaque "Installing..." button label with zero visible progress for
+however long `apt-get install` takes.
+
+`process::run_owned_streaming` is the same primitive as `run_owned`, except
+it also invokes a `LineSink` (`Arc<dyn Fn(StreamKind, &str) + Send + Sync>`)
+once per line as it arrives, in addition to still assembling the complete
+output for the final `CommandOutput` — so this is purely additive, not a
+different code path for the CLI vs GUI. Each adapter that benefits from
+this (apt, flatpak, snap, deb-file) exposes an additional `*_with`/
+`*_streaming` function alongside its plain one (e.g.
+`apt::install_named_with(name, Some(sink))`); the plain functions the
+CLI/daemon already used are unchanged. `stackcrate-gui/src/backend.rs`'s
+`run_streaming` bridges this to the GTK main loop via an `async_channel`,
+and `stackcrate-gui/src/progress.rs` is the dialog that displays it live.
+
+## AppImage self-update (`sources/appimage.rs`, `elf.rs`)
+
+Many real AppImages embed an `Updateinformation` string in a named ELF
+section (`.upd_info`) describing where to check for new releases — most
+commonly `gh-releases-zsync|owner|repo|release|filename-glob`, pointing at
+a GitHub repository's releases. `crates/stackcrate-core/src/elf.rs` is a
+small, hand-rolled ELF64 section reader (not a dependency: the format
+needed is a handful of fixed-offset reads from the section header table,
+narrow enough to get right and unit-test directly, including against a real
+AppImage on disk) used to read that section without ever executing the
+AppImage itself.
+
+`AppImageSource::list_updates`/`update` parse the `gh-releases-zsync` form
+specifically (by far the most common in practice), query that repository's
+latest release over GitHub's REST API, glob-match the asset filename, and
+compare its reported size against the installed file's — the same
+approach real-world AppImage update tooling falls back to when a release
+doesn't carry a checksum, used here as the primary signal rather than a
+fallback, since there's no reliable semantic-version string to compare
+instead. `update()` downloads the matched asset (verifying it against
+GitHub's own asset digest when one is published, and refusing to proceed
+without one if `require-checksum-for-appimage` is set) and reinstalls it
+under the same name, which automatically goes through the same
+snapshot-before-overwrite path as any other reinstall. Other
+`Updateinformation` schemes (a direct `zsync`/static URL) aren't
+auto-checked yet — see [ROADMAP.md](ROADMAP.md).
+
+## One-time local setup (`stackcrate-core/src/setup.rs`)
+
+Writing and enabling the daemon's systemd `--user` unit is needed from two
+places — the CLI's `crate setup daemon` and the GUI's Settings dialog — so
+it lives in `stackcrate-core` rather than being implemented twice and
+risking the two copies drifting apart. The sudoers half
+(`privilege::render_sudoers_rule`/`install_sudoers_rule`) was already
+shared the same way; `setup.rs` is the systemd equivalent.
 
 ## CLI/daemon/GUI control-plane IPC
 
@@ -148,8 +246,17 @@ enabled.
 
 Like the CLI, the GUI contains no package-manager-specific logic. Every
 button handler calls into `stackcrate-core` (through
-`crates/stackcrate-gui/src/backend.rs`'s `run_blocking` helper, which spawns a
-plain OS thread and delivers the result back on the GTK main context via
-`async-channel` + `glib::spawn_future_local`). If you need to change how an
-install or update actually happens, that change belongs in `stackcrate-core`,
-not in a frontend.
+`crates/stackcrate-gui/src/backend.rs`'s `run_blocking`/`run_streaming`
+helpers, which spawn a plain OS thread and deliver the result — and, for
+`run_streaming`, each output line as it arrives — back on the GTK main
+context via `async-channel` + `glib::spawn_future_local`). If you need to
+change how an install or update actually happens, that change belongs in
+`stackcrate-core`, not in a frontend.
+
+Each top-level page (Search, Installed, Updates) is a `gtk::Stack` with two
+named children, `"list"` and `"detail"` (`pages::scaffold`/`show_detail`/
+`show_list`): clicking a row builds a fresh detail view
+(`pages/detail.rs`) and switches to it in place, rather than opening a
+separate window or restructuring the window's outer chrome (header, view
+switcher, global actions), which stays exactly as it was. History and
+Sources are flatter (no drill-down) and stay plain lists.

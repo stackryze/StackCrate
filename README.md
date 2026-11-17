@@ -39,9 +39,9 @@ checksum-verified handling of files you download yourself.
 | Crate | What it is |
 |---|---|
 | [`stackcrate-core`](crates/stackcrate-core) | The library: source adapters, config, local registry (SQLite), verification, privilege handling. No UI, fully unit tested, no GUI dependencies. |
-| [`stackcrate-cli`](crates/stackcrate-cli) | The `crate` command. Scriptable, colored output, confirmation prompts, JSON-free by design for now (see [ROADMAP](ROADMAP.md)). |
-| [`stackcrate-daemon`](crates/stackcrate-daemon) | `stackcrate-daemon`: a small background service — timer-driven checks, a filesystem watch for faster reaction to real package-state changes, desktop notifications, and a Unix-socket control API the CLI/GUI use to avoid duplicating logic. |
-| [`stackcrate-gui`](crates/stackcrate-gui) | A GTK4 + libadwaita desktop app: search, installed packages, pending updates, a header-bar "install a local file" action, and settings. Confirmed building and running live (search, install, remove, update all exercised against a real daemon) on Ubuntu 26.04 with `libgtk-4-dev`/`libadwaita-1-dev` installed. |
+| [`stackcrate-cli`](crates/stackcrate-cli) | The `crate` command. Scriptable (`--json` on every read command), colored output, confirmation prompts, shell completions, a man page. |
+| [`stackcrate-daemon`](crates/stackcrate-daemon) | `stackcrate-daemon`: a small background service — timer-driven checks, a filesystem watch for faster reaction to real package-state changes, actionable desktop notifications (clicking one opens the GUI), optional AC-power-aware auto-updates, and a Unix-socket control API the CLI/GUI use to avoid duplicating logic. |
+| [`stackcrate-gui`](crates/stackcrate-gui) | A GTK4 + libadwaita desktop app: search, installed packages, pending updates, history, sources/pins, a package detail view with live install/remove/update progress, and settings. Confirmed building and running live (search, install, remove, update, rollback all exercised against the real system) on Ubuntu 26.04 with `libgtk-4-dev`/`libadwaita-1-dev` installed. |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together,
 [ROADMAP.md](ROADMAP.md) for what's deliberately not here yet, and
@@ -64,7 +64,11 @@ than trying to cover every distro's package manager on day one:
   symlink, and a `.desktop` launcher.
 - **AppImage** — copied into a stable location, made executable, and given a
   real application-menu entry by extracting its embedded `.desktop` file and
-  icon (via the AppImage's own `--appimage-extract`).
+  icon (via the AppImage's own `--appimage-extract`). Overwriting an existing
+  install (a manual reinstall, or a self-update) snapshots the previous one
+  first, so `crate rollback appimage <id>` can restore it. If the AppImage
+  embeds a GitHub-releases `Updateinformation` string, StackCrate checks it
+  for updates and can self-update it like any other source.
 - **Flatpak** and **Snap** — thin wrappers over their own CLIs, including
   non-destructive pending-update queries (`flatpak remote-ls --updates`,
   `snap refresh --list`) so checking never silently changes anything.
@@ -116,19 +120,31 @@ cargo build --release -p stackcrate-gui                       # needs GTK4/libad
 ```
 crate search <query> [--source apt|flatpak|snap]
 crate install <name|file|url> [--source ...] [--name ...] [--exec ...] [--icon ...] [--checksum sha256sum]
-crate remove <id> [--source ...]
-crate update [<id>] [--refresh] [--all]
-crate list installed|updates|sources
+crate remove <id> [--source ...]                  # warns if removing it takes other packages with it (apt)
+crate update [<id>] [--refresh]
+crate autoremove                                  # clean up apt packages nothing needs anymore
+crate clean                                       # clear the download cache
+crate rollback <archive|appimage> <id>             # restore the snapshot taken before the last overwrite
+crate doctor                                       # sources/daemon/sudoers/registry health check
+crate explain <source> <id>                        # why is this installed, what depends on it (apt)
+crate changelog <name>                             # upstream/Debian changelog (apt)
+crate show <source> <id>                           # size, maintainer, homepage, license, ...
+crate list installed|updates|sources|disk-usage
 crate status
 crate history
-crate pin|unpin <source> <id>
+crate pin <source> <id> [--version <v>]  |  crate unpin <source> <id>
 crate setup sudoers|daemon
 crate config show|set <key> <value>
+crate completions <bash|zsh|fish|elvish|powershell>
 ```
 
 Every mutating command prompts for confirmation unless you pass `-y/--yes`;
 in a non-interactive session (scripts, cron), it refuses to proceed without
-`--yes` rather than hanging or silently defaulting to "yes".
+`--yes` rather than hanging or silently defaulting to "yes". The read-only
+commands (`search`, `list`, `status`, `history`, `show`, `explain`, `doctor`)
+also accept a global `--json` flag for scripting. Packaged installs (`.deb`)
+ship a man page (`man crate`) and bash/fish completions already wired up;
+`crate completions <shell>` covers anyone who built/installed another way.
 
 ## Real-time monitoring
 
@@ -144,13 +160,15 @@ in a non-interactive session (scripts, cron), it refuses to proceed without
   minute so an unusually chatty filesystem can't turn this into a busy loop.
 - A desktop notification fires when the pending-update set actually changes
   (not on every tick), summarizing the count and how many are security
-  updates.
+  updates; clicking it (or its "Open StackCrate" action) launches the GUI.
 - Update policy (`crate config set update-policy ...`) controls what
   happens automatically: `notify-only` (default), `security-only`, or
   `auto-all`. Anything that needs root only runs unattended if a passwordless
   sudo rule is installed (`crate setup sudoers`); otherwise the daemon never
   pops a surprise authentication prompt on its own timer — it just notifies,
-  and you run `crate update` yourself.
+  and you run `crate update` yourself. On a laptop, `require-ac-power-for
+  -auto-update` makes `security-only`/`auto-all` fall back to notify-only
+  while on battery, so an unattended policy can't install on battery power.
 
 ## Security model
 
@@ -189,6 +207,17 @@ installs) — but it's worth crediting as prior art that shaped some of the
 design decisions above. If your priority is the widest possible distro
 coverage today rather than the real-time-monitoring and direct-file-install
 features described here, it's a solid, actively simpler alternative.
+
+[Gear Lever](https://github.com/mijorus/gearlever) was reviewed for its
+AppImage-specific handling (embedded `Updateinformation` parsing, update
+backends, trust/conflict UX) while designing StackCrate's AppImage
+self-update support. No code from it is vendored either — it's a
+Python/GTK4 app with its own extraction pipeline (`7zz`/`unsquashfs`/
+`dwarfsextract`); StackCrate's equivalent is a from-scratch Rust ELF-section
+reader (`crates/stackcrate-core/src/elf.rs`) plus a GitHub-releases update
+checker, scoped to the subset of Gear Lever's behavior (the
+`gh-releases-zsync` scheme specifically) that covers the common real-world
+case.
 
 ## License
 
