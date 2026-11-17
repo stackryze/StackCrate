@@ -6,6 +6,9 @@ BIN_DIR="$HOME/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
 POLKIT_ACTIONS_DIR="/usr/share/polkit-1/actions"
+MAN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/man"
+BASH_COMPLETION_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
+FISH_COMPLETION_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"
 
 SKIP_GUI=0
 SKIP_POLKIT=0
@@ -56,6 +59,28 @@ install -m 0755 "$SRC_DIR/target/release/crate" "$BIN_DIR/crate"
 install -m 0755 "$SRC_DIR/target/release/stackcrate-daemon" "$BIN_DIR/stackcrate-daemon"
 printf 'Installed %s and %s\n' "$BIN_DIR/crate" "$BIN_DIR/stackcrate-daemon"
 
+# gen-man/gen-completions are extra [[bin]] targets of the stackcrate-cli
+# crate (not installed for end users -- see its Cargo.toml), so the cargo
+# build above already produced them alongside `crate` itself; just run them.
+printf 'Installing man page and shell completions...\n'
+GEN_DIR="$(mktemp -d)"
+"$SRC_DIR/target/release/gen-man" "$GEN_DIR"
+"$SRC_DIR/target/release/gen-completions" "$GEN_DIR"
+
+mkdir -p "$MAN_DIR/man1" "$BASH_COMPLETION_DIR" "$FISH_COMPLETION_DIR"
+# man-db auto-adds $MAN_DIR once $BIN_DIR is on $PATH (see manpath(5)), and
+# bash-completion/fish both auto-load per-user completions straight from
+# these exact directories -- no shell rc edits needed for either. The bare
+# "crate" (not gen-completions' own "crate.bash") is the long-standing,
+# portable convention bash-completion expects; fish's own naming already
+# matches. zsh has no equivalent zero-config user directory, so it isn't
+# installed here; see `crate completions zsh` for that shell instead.
+install -m 0644 "$GEN_DIR/crate.1" "$MAN_DIR/man1/crate.1"
+install -m 0644 "$GEN_DIR/crate.bash" "$BASH_COMPLETION_DIR/crate"
+install -m 0644 "$GEN_DIR/crate.fish" "$FISH_COMPLETION_DIR/crate.fish"
+rm -rf "$GEN_DIR"
+printf 'Installed %s and bash/fish completions.\n' "$MAN_DIR/man1/crate.1"
+
 if [[ "$GUI_BUILT" -eq 1 ]]; then
   install -m 0755 "$SRC_DIR/target/release/stackcrate-gui" "$BIN_DIR/stackcrate-gui"
   install -m 0644 "$SRC_DIR/packaging/desktop/org.stackcrate.StackCrate.desktop" "$APPLICATIONS_DIR/org.stackcrate.StackCrate.desktop"
@@ -90,13 +115,17 @@ fi
 cat <<EOF
 
 StackCrate is installed.
-  CLI:    crate --help
+  CLI:    crate --help (or: man crate)
   Daemon: systemctl --user status stackcrate-daemon
 EOF
 if [[ "$GUI_BUILT" -eq 1 ]]; then
   printf '  GUI:    stackcrate-gui (also in your application menu)\n'
 fi
 cat <<EOF
+
+Bash and fish completions were installed automatically; for zsh, run:
+  crate completions zsh
+and add the output to a directory on your completion path.
 
 For unattended background checks without repeated password prompts, run:
   crate setup sudoers

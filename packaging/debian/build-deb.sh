@@ -5,8 +5,16 @@
 # while the GUI needs the full GTK4/libadwaita stack -- no reason to force
 # that onto a headless/server install of the base package.
 #
-# Validated with `lintian`; every remaining warning is a deliberate,
-# documented tradeoff (see comments below) rather than an oversight.
+# Validated with `lintian`. `crate`'s man page and shell completions
+# (generated below) mean `no-manual-page` no longer fires for usr/bin/crate;
+# the remaining warnings are deliberate, documented tradeoffs rather than
+# oversights: `no-manual-page` for usr/bin/stackcrate-daemon and
+# usr/bin/stackcrate-gui (neither is meant to be run by typing a command --
+# one's a systemd-managed background service, the other's launched from its
+# desktop file/app menu entry), and `uses-dpkg-database-directly` (the
+# daemon's filesystem watch reads /var/lib/dpkg/status directly for faster
+# reaction to changes made outside StackCrate -- see
+# crates/stackcrate-daemon/src/watch.rs).
 set -euo pipefail
 umask 0022 # otherwise a group-writable umask leaks into package file modes
 
@@ -20,7 +28,7 @@ MAINTAINER="StackCrate contributors <stackcrate@stackryze.invalid>"
 HOMEPAGE="https://github.com/stackryze/StackCrate"
 DATE_RFC2822="$(date -R)"
 
-for bin in crate stackcrate-daemon; do
+for bin in crate stackcrate-daemon gen-man gen-completions; do
   [[ -x "$RELEASE_DIR/$bin" ]] || {
     echo "error: $RELEASE_DIR/$bin not found; run cargo build --release first" >&2
     exit 1
@@ -50,10 +58,48 @@ build_base_package() {
     "$stage/usr/bin" \
     "$stage/usr/share/polkit-1/actions" \
     "$stage/usr/lib/systemd/user" \
-    "$stage/usr/share/doc/stackcrate"
+    "$stage/usr/share/doc/stackcrate" \
+    "$stage/usr/share/man/man1" \
+    "$stage/usr/share/bash-completion/completions" \
+    "$stage/usr/share/zsh/vendor-completions" \
+    "$stage/usr/share/fish/vendor_completions.d"
 
   install -m 0755 "$RELEASE_DIR/crate" "$stage/usr/bin/crate"
   install -m 0755 "$RELEASE_DIR/stackcrate-daemon" "$stage/usr/bin/stackcrate-daemon"
+
+  # gen-man/gen-completions are additional [[bin]] targets of the
+  # stackcrate-cli crate (see its Cargo.toml; not installed for end users),
+  # so the same `cargo build --release --workspace` this script already
+  # requires (see the check above) also produced them at $RELEASE_DIR --
+  # just run them, the same way `crate` itself above is installed, not
+  # rebuilt, by this script.
+  local gen_dir
+  gen_dir="$(mktemp -d)"
+  "$RELEASE_DIR/gen-man" "$gen_dir"
+  "$RELEASE_DIR/gen-completions" "$gen_dir"
+
+  # Debian convention is a gzipped man page; -n omits the embedded
+  # filename/timestamp so the .gz is reproducible across rebuilds (same
+  # reasoning as write_changelog's gzip below). Mode 0644 comes from this
+  # script's own `umask 0022` above, same as changelog.gz.
+  gzip -9 -n -c "$gen_dir/crate.1" >"$stage/usr/share/man/man1/crate.1.gz"
+
+  # clap_complete names bash's output "<bin-name>.bash" (here: crate.bash).
+  # bash-completion's loader does also fall back to trying "<name>.bash",
+  # but the bare "<name>" (no extension) is the long-standing, portable
+  # convention essentially every other Debian-packaged completion uses, so
+  # that's the name it's installed under here. zsh's "_crate" and fish's
+  # "crate.fish" are already exactly the filenames their completion systems
+  # look for, so those two install unchanged. elvish/PowerShell completions
+  # also come out of gen-completions but aren't installed into this package
+  # -- not meaningful on Debian/Ubuntu -- `crate completions elvish` /
+  # `crate completions powershell` still cover anyone who wants them
+  # directly.
+  install -m 0644 "$gen_dir/crate.bash" "$stage/usr/share/bash-completion/completions/crate"
+  install -m 0644 "$gen_dir/_crate" "$stage/usr/share/zsh/vendor-completions/_crate"
+  install -m 0644 "$gen_dir/crate.fish" "$stage/usr/share/fish/vendor_completions.d/crate.fish"
+  rm -rf "$gen_dir"
+
   install -m 0644 "$ROOT/packaging/polkit/org.stackcrate.policy" "$stage/usr/share/polkit-1/actions/org.stackcrate.policy"
   # Package-installed binaries are on PATH, so the unit doesn't need the
   # %h/.local/bin-relative ExecStart that `crate setup daemon` generates
@@ -118,13 +164,15 @@ Section: admin
 Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
+Depends: libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5)
 Recommends: stackcrate (= $VERSION), desktop-file-utils
 Homepage: $HOMEPAGE
 Description: GTK4/libadwaita desktop app for StackCrate
- Search, installed-packages, and pending-updates views, plus a
- header-bar action to install a local .deb/archive/AppImage file,
- backed by the same stackcrate-core engine as the crate CLI.
+ Search, installed-packages, pending-updates, history, and sources views
+ with filtering/sorting, a package detail view with live install/remove/
+ update progress, plus a header-bar action to install a local .deb/
+ archive/AppImage file, backed by the same stackcrate-core engine as the
+ crate CLI.
 EOF
 
   dpkg-deb --build --root-owner-group "$stage" "$OUTPUT_DIR/stackcrate-gui_${VERSION}_${ARCH}.deb"

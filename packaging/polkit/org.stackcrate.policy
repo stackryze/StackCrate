@@ -28,6 +28,18 @@
     <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/apt-get</annotate>
   </action>
 
+  <action id="org.stackcrate.run-apt-mark">
+    <description>Run apt-mark</description>
+    <message>Authentication is required to hold or unhold an apt package at its current version</message>
+    <icon_name>software-update-available-symbolic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/apt-mark</annotate>
+  </action>
+
   <action id="org.stackcrate.run-dpkg">
     <description>Run dpkg</description>
     <message>Authentication is required to install a local .deb package</message>

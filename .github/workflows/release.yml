@@ -49,8 +49,12 @@ jobs:
 
       - name: Build binary tarball
         run: |
-          mkdir -p dist
-          tar -C target/release -czf "dist/stackcrate-${{ steps.ver.outputs.version }}-x86_64-linux-gnu.tar.gz" crate stackcrate-daemon stackcrate-gui
+          mkdir -p dist dist-tarball
+          target/release/gen-man dist-tarball
+          target/release/gen-completions dist-tarball
+          tar -czf "dist/stackcrate-${{ steps.ver.outputs.version }}-x86_64-linux-gnu.tar.gz" \
+            -C target/release crate stackcrate-daemon stackcrate-gui \
+            -C "$PWD/dist-tarball" crate.1 crate.bash _crate crate.fish crate.elv _crate.ps1
 
       - name: Checksums
         working-directory: dist
