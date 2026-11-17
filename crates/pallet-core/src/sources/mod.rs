@@ -1,5 +1,5 @@
-pub mod apt;
 pub mod appimage;
+pub mod apt;
 pub mod archive;
 pub mod deb_file;
 pub mod flatpak;
@@ -98,7 +98,8 @@ pub fn resolve_install_target(input: &str, source_hint: Option<SourceId>) -> Res
         // Best-effort guess from the URL path so progress messages can say
         // something meaningful before the download even starts; the real
         // decision happens after downloading, via `install_url`.
-        let guessed = sniff::detect_by_extension(std::path::Path::new(input)).unwrap_or(SourceId::Archive);
+        let guessed =
+            sniff::detect_by_extension(std::path::Path::new(input)).unwrap_or(SourceId::Archive);
         return Ok(InstallTarget::Url {
             source: guessed,
             url: input.to_string(),
