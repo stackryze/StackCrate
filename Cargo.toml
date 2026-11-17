@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/pallet-core",
-    "crates/pallet-cli",
-    "crates/pallet-daemon",
-    "crates/pallet-gui",
+    "crates/stackcrate-core",
+    "crates/stackcrate-cli",
+    "crates/stackcrate-daemon",
+    "crates/stackcrate-gui",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-authors = ["Pallet contributors"]
+authors = ["StackCrate contributors"]
 repository = "https://github.com/stackryze/StackCrate"
 rust-version = "1.85"
 

@@ -1,40 +1,40 @@
 # Contributing
 
-Thanks for looking at Pallet. A few ground rules to keep the codebase
+Thanks for looking at StackCrate. A few ground rules to keep the codebase
 coherent as it grows:
 
 ## Development setup
 
 ```
-cargo build --workspace --exclude pallet-gui   # core + CLI + daemon, no system deps
-sudo apt install libgtk-4-dev libadwaita-1-dev # only needed for pallet-gui
-cargo build -p pallet-gui
+cargo build --workspace --exclude stackcrate-gui   # core + CLI + daemon, no system deps
+sudo apt install libgtk-4-dev libadwaita-1-dev # only needed for stackcrate-gui
+cargo build -p stackcrate-gui
 ```
 
 ## Checks before opening a PR
 
 ```
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude pallet-gui --all-targets -- -D warnings
-cargo test --workspace --exclude pallet-gui
+cargo clippy --workspace --exclude stackcrate-gui --all-targets -- -D warnings
+cargo test --workspace --exclude stackcrate-gui
 ```
 
-(`pallet-gui` is excluded from the default commands because it needs system
+(`stackcrate-gui` is excluded from the default commands because it needs system
 GTK4/libadwaita headers that aren't assumed to be present; CI builds it in a
 separate job that installs them first.)
 
 ## Architecture rules
 
 - Package-manager command construction, output parsing, and anything that
-  touches the filesystem beyond Pallet's own state lives in `pallet-core`.
+  touches the filesystem beyond StackCrate's own state lives in `stackcrate-core`.
   The CLI, daemon, and GUI call into it; they don't duplicate it.
 - New install mechanisms implement `sources::PackageSource`
-  (`crates/pallet-core/src/sources/mod.rs`) and get registered in
+  (`crates/stackcrate-core/src/sources/mod.rs`) and get registered in
   `all_sources()`/`source_by_id()`. See [ARCHITECTURE.md](ARCHITECTURE.md)
   for the shape of that trait and why two adapters (archive, appimage)
   bypass it for their richer install options.
 - Anything that shells out to an external command goes through
-  `pallet_core::process` (for plain commands) or `pallet_core::privilege`
+  `stackcrate_core::process` (for plain commands) or `stackcrate_core::privilege`
   (for anything that needs root), not a raw `std::process::Command` in a
   source adapter — that's what keeps timeout handling, error shapes, and the
   privilege-escalation decision consistent across every adapter.
@@ -48,7 +48,7 @@ separate job that installs them first.)
 
 Be extra careful with, and call out explicitly in the PR description:
 
-- anything under `pallet_core::privilege` or `pallet_core::verify`
+- anything under `stackcrate_core::privilege` or `stackcrate_core::verify`
 - archive/zip extraction (`archive_safety.rs`) — any change here should come
   with a test that tries to break it (crafted `..` paths, symlinks that
   point outside the destination), not just a test that it works for
@@ -59,7 +59,7 @@ Be extra careful with, and call out explicitly in the PR description:
 
 ## Testing against a real system
 
-`pallet-core`'s adapters shell out to real package-manager binaries, so most
+`stackcrate-core`'s adapters shell out to real package-manager binaries, so most
 of its tests are either pure parsing/validation tests (no subprocess calls)
 or deliberately skip when the relevant binary isn't present, rather than
 mocking `apt-get`/`dpkg`/`flatpak`/`snap`. If you're adding an adapter,
@@ -78,7 +78,7 @@ several small, logically-grouped commits over one large one.
 ## Cutting a release
 
 1. Update `workspace.package.version` in the root `Cargo.toml` (every crate
-   inherits it) and run `cargo check --workspace --exclude pallet-gui` once
+   inherits it) and run `cargo check --workspace --exclude stackcrate-gui` once
    so `Cargo.lock` picks up the bump.
 2. Add a new `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (and its
    `[X.Y.Z]: .../releases/tag/vX.Y.Z` link at the bottom), following
@@ -87,7 +87,7 @@ several small, logically-grouped commits over one large one.
    push the tag (`git push origin vX.Y.Z`).
 4. `.github/workflows/release.yml` takes it from there: it fails closed if
    the tag doesn't match `Cargo.toml`'s version, runs the full test/lint
-   suite, builds release binaries, builds `pallet`/`pallet-gui` `.deb`
+   suite, builds release binaries, builds `crate`/`stackcrate-gui` `.deb`
    packages (`packaging/debian/build-deb.sh`), and publishes a GitHub
    Release with the binaries, `.deb`s, a tarball, and `SHA256SUMS`, using
    that version's `CHANGELOG.md` section as the release notes.

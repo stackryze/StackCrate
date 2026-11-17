@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=StackCrate
+GenericName=Software Manager
+Comment=Install and update software from apt, local .deb files, archives, AppImages, Flatpak and Snap
+Exec=stackcrate-gui
+Icon=org.stackcrate.StackCrate
+Terminal=false
+Categories=System;PackageManager;Settings;
+StartupNotify=true
+Keywords=package;software;install;update;apt;deb;appimage;flatpak;snap;

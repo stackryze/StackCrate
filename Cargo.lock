@@ -1800,80 +1800,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pallet-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "colored",
- "dirs-next",
- "pallet-core",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "pallet-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs-next",
- "flate2",
- "hex",
- "nix",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "toml",
- "tracing",
- "url",
- "uuid",
- "which",
- "xz2",
- "zip",
-]
-
-[[package]]
-name = "pallet-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "notify",
- "notify-debouncer-mini",
- "notify-rust",
- "pallet-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "pallet-gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "chrono",
- "gtk4",
- "libadwaita",
- "pallet-core",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "pango"
 version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2508,6 +2434,80 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stackcrate-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "colored",
+ "dirs-next",
+ "stackcrate-core",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "stackcrate-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs-next",
+ "flate2",
+ "hex",
+ "nix",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+ "tracing",
+ "url",
+ "uuid",
+ "which",
+ "xz2",
+ "zip",
+]
+
+[[package]]
+name = "stackcrate-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "notify",
+ "notify-debouncer-mini",
+ "notify-rust",
+ "serde",
+ "serde_json",
+ "stackcrate-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "stackcrate-gui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "chrono",
+ "gtk4",
+ "libadwaita",
+ "stackcrate-core",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "strsim"

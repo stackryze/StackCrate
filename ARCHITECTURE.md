@@ -4,22 +4,22 @@
 
 ```
 crates/
-  pallet-core/     library: adapters, config, registry, verification, privilege, IPC types
-  pallet-cli/      bin "pallet": argument parsing, confirmation prompts, output formatting
-  pallet-daemon/   bin "pallet-daemon": scheduler, notifications, filesystem watch, IPC server
-  pallet-gui/      bin "pallet-gui": GTK4 + libadwaita frontend
+  stackcrate-core/     library: adapters, config, registry, verification, privilege, IPC types
+  stackcrate-cli/      bin "crate": argument parsing, confirmation prompts, output formatting
+  stackcrate-daemon/   bin "stackcrate-daemon": scheduler, notifications, filesystem watch, IPC server
+  stackcrate-gui/      bin "stackcrate-gui": GTK4 + libadwaita frontend
 ```
 
-`pallet-core` has no GUI dependencies and no required async runtime, so it
+`stackcrate-core` has no GUI dependencies and no required async runtime, so it
 builds and tests anywhere Rust does. The daemon is the only crate that pulls
-in `tokio`; the CLI and GUI call into `pallet-core` synchronously (the GUI
+in `tokio`; the CLI and GUI call into `stackcrate-core` synchronously (the GUI
 bridges blocking calls onto a background thread — see
-`crates/pallet-gui/src/backend.rs` — so the UI thread never stalls).
+`crates/stackcrate-gui/src/backend.rs` — so the UI thread never stalls).
 
 ## The `PackageSource` trait
 
 Every install mechanism implements one trait
-(`crates/pallet-core/src/sources/mod.rs`):
+(`crates/stackcrate-core/src/sources/mod.rs`):
 
 ```rust
 trait PackageSource {
@@ -73,7 +73,7 @@ typed into one of:
 
 ## Privilege model
 
-`crates/pallet-core/src/privilege.rs` picks, per call, between:
+`crates/stackcrate-core/src/privilege.rs` picks, per call, between:
 
 1. Already root → run directly.
 2. A graphical session is present and `pkexec` exists → use it, so polkit
@@ -89,21 +89,21 @@ Separately, `privilege::passwordless_available(program)` probes
 to) so the daemon's unattended timer can decide whether a privileged
 metadata refresh or auto-update is possible *without ever risking a surprise
 auth dialog*. Without the optional sudoers rule
-(`pallet setup sudoers` / `privilege::install_sudoers_rule`), the daemon
+(`crate setup sudoers` / `privilege::install_sudoers_rule`), the daemon
 still runs its unprivileged checks and still notifies — it just can't
 silently refresh apt's metadata or auto-apply anything, and says so in its
 log.
 
 ## Local state
 
-Everything Pallet itself needs to remember lives in one SQLite database
-(`crates/pallet-core/src/registry.rs`, opened in WAL mode so the CLI,
+Everything StackCrate itself needs to remember lives in one SQLite database
+(`crates/stackcrate-core/src/registry.rs`, opened in WAL mode so the CLI,
 daemon, and GUI can all touch it concurrently without their own locking):
 
 - `manual_installs` — archives/AppImages, since there's no system package
   database for those.
-- `update_cache` — what the last check found, so `pallet list updates` and
-  `pallet status` are instant reads instead of re-querying every source.
+- `update_cache` — what the last check found, so `crate list updates` and
+  `crate status` are instant reads instead of re-querying every source.
 - `history` — an audit log of every install/remove/update, including
   unattended ones the daemon performed.
 - `pins` — packages held back from bulk/auto updates.
@@ -114,20 +114,20 @@ daemon, and GUI can all touch it concurrently without their own locking):
 
 ## CLI/daemon/GUI control-plane IPC
 
-The daemon listens on a Unix socket (`$XDG_RUNTIME_DIR/pallet.sock`) and
-speaks newline-delimited JSON (`crates/pallet-core/src/ipc.rs`) — one
+The daemon listens on a Unix socket (`$XDG_RUNTIME_DIR/stackcrate.sock`) and
+speaks newline-delimited JSON (`crates/stackcrate-core/src/ipc.rs`) — one
 `Request` per line in, one `Response` per line out. This was chosen over
 D-Bus specifically for this project: it needs zero additional dependency
 surface beyond `serde`, there's exactly one daemon per user session so
 service discovery doesn't need a bus, and it's trivially debuggable by hand
-(`socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/pallet.sock`). `pallet status` tries
+(`socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/stackcrate.sock`). `crate status` tries
 the daemon first and falls back to reading the local SQLite cache directly
 if it isn't running, so the CLI stays useful even without the service
 enabled.
 
 ## Real-time monitoring, concretely
 
-`pallet-daemon`'s scheduler (`crates/pallet-daemon/src/scheduler.rs` +
+`stackcrate-daemon`'s scheduler (`crates/stackcrate-daemon/src/scheduler.rs` +
 `main.rs`) runs three things concurrently via `tokio::select!`:
 
 1. A timer at `check_interval_minutes` (reloaded from config every cycle, so
@@ -136,7 +136,7 @@ enabled.
    handful of files listed in `watch.rs`, filtered to the exact target paths
    (not "anything in the directory changed" — lock files and other siblings
    in the same directories churn independently and would otherwise
-   self-trigger against Pallet's own read-only queries), and additionally
+   self-trigger against StackCrate's own read-only queries), and additionally
    rate-limited to at most one fs-triggered check per minute regardless of
    how often the underlying signal fires. Both of those safeguards came out
    of testing against a real filesystem, not just read from a spec — see the
@@ -147,9 +147,9 @@ enabled.
 ## What the GUI does and doesn't own
 
 Like the CLI, the GUI contains no package-manager-specific logic. Every
-button handler calls into `pallet-core` (through
-`crates/pallet-gui/src/backend.rs`'s `run_blocking` helper, which spawns a
+button handler calls into `stackcrate-core` (through
+`crates/stackcrate-gui/src/backend.rs`'s `run_blocking` helper, which spawns a
 plain OS thread and delivers the result back on the GTK main context via
 `async-channel` + `glib::spawn_future_local`). If you need to change how an
-install or update actually happens, that change belongs in `pallet-core`,
+install or update actually happens, that change belongs in `stackcrate-core`,
 not in a frontend.

@@ -50,7 +50,7 @@ jobs:
       - name: Build binary tarball
         run: |
           mkdir -p dist
-          tar -C target/release -czf "dist/pallet-${{ steps.ver.outputs.version }}-x86_64-linux-gnu.tar.gz" pallet pallet-daemon pallet-gui
+          tar -C target/release -czf "dist/stackcrate-${{ steps.ver.outputs.version }}-x86_64-linux-gnu.tar.gz" crate stackcrate-daemon stackcrate-gui
 
       - name: Checksums
         working-directory: dist
@@ -73,5 +73,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "Pallet $GITHUB_REF_NAME" \
+            --title "StackCrate $GITHUB_REF_NAME" \
             --notes-file release-notes.md

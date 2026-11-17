@@ -21,9 +21,9 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
-        run: cargo clippy --workspace --exclude pallet-gui --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude stackcrate-gui --all-targets -- -D warnings
       - name: test
-        run: cargo test --workspace --exclude pallet-gui
+        run: cargo test --workspace --exclude stackcrate-gui
 
   gui:
     name: GUI (build only)
@@ -37,9 +37,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
       - name: clippy
-        run: cargo clippy -p pallet-gui --all-targets -- -D warnings
+        run: cargo clippy -p stackcrate-gui --all-targets -- -D warnings
       - name: build
-        run: cargo build -p pallet-gui
+        run: cargo build -p stackcrate-gui
 
   shell-check:
     name: install.sh syntax

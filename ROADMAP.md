@@ -1,6 +1,6 @@
 # Roadmap
 
-Pallet's first milestone (this codebase, today) deliberately targets
+StackCrate's first milestone (this codebase, today) deliberately targets
 Debian/Ubuntu + the cross-distro app formats (archives, AppImage, Flatpak,
 Snap). Everything below is scoped-out on purpose, not forgotten.
 
@@ -26,8 +26,8 @@ a source doesn't touch the CLI, daemon, or GUI:
 
 - **Rollback/snapshots.** Hook into Timeshift/Snapper where present for
   distro packages; for archive/AppImage installs, a tar snapshot before
-  overwrite-on-update would make `pallet rollback <id>` straightforward
-  since Pallet already owns that directory.
+  overwrite-on-update would make `crate rollback <id>` straightforward
+  since StackCrate already owns that directory.
 - **Version pinning beyond "skip in bulk update".** Pin to an exact version,
   not just hold back from auto-update.
 - **AppImage self-update.** Parse embedded `Updateinformation` and use
@@ -38,11 +38,11 @@ a source doesn't touch the CLI, daemon, or GUI:
 
 ## Phase 4 — interface
 
-- **JSON output mode** (`pallet --json list updates`) for scripting, once
+- **JSON output mode** (`crate --json list updates`) for scripting, once
   the output shape has stabilized from real use.
 - **Qt frontend** alongside GTK4, if there's demand from KDE/Plasma users —
   the CLI/daemon/GUI split already means this would be a new frontend crate
-  calling the same `pallet-core` + IPC surface, not a rewrite.
+  calling the same `stackcrate-core` + IPC surface, not a rewrite.
 - **System tray indicator** fed by the daemon's IPC, as a lighter-weight
   alternative to opening the full GUI just to see update counts.
 
@@ -52,7 +52,7 @@ a source doesn't touch the CLI, daemon, or GUI:
   `pkexec`/`sudo` per call; see [ARCHITECTURE.md](ARCHITECTURE.md#privilege-model)
   for why. A root-owned always-on service would need a much larger security
   review to justify the extra attack surface over what this buys.
-- **Full cross-ecosystem dependency resolution.** Pallet delegates
+- **Full cross-ecosystem dependency resolution.** StackCrate delegates
   dependency resolution to each native package manager (apt resolves apt
   dependencies, Flatpak resolves its own runtimes, etc.) rather than
   attempting a universal solver across unrelated ecosystems — that's a

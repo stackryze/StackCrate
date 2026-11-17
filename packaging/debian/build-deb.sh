@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds pallet_<version>_<arch>.deb (CLI + daemon) and, if pallet-gui was
-# built, pallet-gui_<version>_<arch>.deb (GUI, depends on the base package).
+# Builds stackcrate_<version>_<arch>.deb (CLI + daemon) and, if stackcrate-gui was
+# built, stackcrate-gui_<version>_<arch>.deb (GUI, depends on the base package).
 # Split in two because the CLI/daemon only link against glibc (see `ldd`),
 # while the GUI needs the full GTK4/libadwaita stack -- no reason to force
 # that onto a headless/server install of the base package.
@@ -16,11 +16,11 @@ OUTPUT_DIR="${3:-dist}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RELEASE_DIR="$ROOT/target/release"
-MAINTAINER="Pallet contributors <pallet@stackryze.invalid>"
+MAINTAINER="StackCrate contributors <stackcrate@stackryze.invalid>"
 HOMEPAGE="https://github.com/stackryze/StackCrate"
 DATE_RFC2822="$(date -R)"
 
-for bin in pallet pallet-daemon; do
+for bin in crate stackcrate-daemon; do
   [[ -x "$RELEASE_DIR/$bin" ]] || {
     echo "error: $RELEASE_DIR/$bin not found; run cargo build --release first" >&2
     exit 1
@@ -50,23 +50,23 @@ build_base_package() {
     "$stage/usr/bin" \
     "$stage/usr/share/polkit-1/actions" \
     "$stage/usr/lib/systemd/user" \
-    "$stage/usr/share/doc/pallet"
+    "$stage/usr/share/doc/stackcrate"
 
-  install -m 0755 "$RELEASE_DIR/pallet" "$stage/usr/bin/pallet"
-  install -m 0755 "$RELEASE_DIR/pallet-daemon" "$stage/usr/bin/pallet-daemon"
-  install -m 0644 "$ROOT/packaging/polkit/org.pallet.policy" "$stage/usr/share/polkit-1/actions/org.pallet.policy"
+  install -m 0755 "$RELEASE_DIR/crate" "$stage/usr/bin/crate"
+  install -m 0755 "$RELEASE_DIR/stackcrate-daemon" "$stage/usr/bin/stackcrate-daemon"
+  install -m 0644 "$ROOT/packaging/polkit/org.stackcrate.policy" "$stage/usr/share/polkit-1/actions/org.stackcrate.policy"
   # Package-installed binaries are on PATH, so the unit doesn't need the
-  # %h/.local/bin-relative ExecStart that `pallet setup daemon` generates
+  # %h/.local/bin-relative ExecStart that `crate setup daemon` generates
   # for from-source installs.
-  sed 's#%h/\.local/bin/pallet-daemon#/usr/bin/pallet-daemon#' \
-    "$ROOT/packaging/systemd/pallet-daemon.service" >"$stage/usr/lib/systemd/user/pallet-daemon.service"
-  chmod 0644 "$stage/usr/lib/systemd/user/pallet-daemon.service"
-  install -m 0644 "$ROOT/LICENSE" "$stage/usr/share/doc/pallet/copyright"
-  install -m 0644 "$ROOT/README.md" "$stage/usr/share/doc/pallet/README.md"
-  write_changelog pallet "$stage/usr/share/doc/pallet/changelog.gz"
+  sed 's#%h/\.local/bin/stackcrate-daemon#/usr/bin/stackcrate-daemon#' \
+    "$ROOT/packaging/systemd/stackcrate-daemon.service" >"$stage/usr/lib/systemd/user/stackcrate-daemon.service"
+  chmod 0644 "$stage/usr/lib/systemd/user/stackcrate-daemon.service"
+  install -m 0644 "$ROOT/LICENSE" "$stage/usr/share/doc/stackcrate/copyright"
+  install -m 0644 "$ROOT/README.md" "$stage/usr/share/doc/stackcrate/README.md"
+  write_changelog stackcrate "$stage/usr/share/doc/stackcrate/changelog.gz"
 
   cat >"$stage/DEBIAN/control" <<EOF
-Package: pallet
+Package: stackcrate
 Version: $VERSION
 Section: admin
 Priority: optional
@@ -74,23 +74,23 @@ Architecture: $ARCH
 Maintainer: $MAINTAINER
 Depends: libc6 (>= 2.34)
 Recommends: polkitd, pkexec, flatpak, snapd
-Suggests: pallet-gui (= $VERSION)
+Suggests: stackcrate-gui (= $VERSION)
 Homepage: $HOMEPAGE
 Description: unified package manager for apt, archives, AppImage, Flatpak, Snap
- Pallet brings apt, local .deb files, plain archives, AppImages, Flatpak,
+ StackCrate brings apt, local .deb files, plain archives, AppImages, Flatpak,
  and Snap behind one CLI and one background update monitor. The monitor
  never escalates privilege on its own timer unless a passwordless sudo
- rule has been explicitly installed (pallet setup sudoers); by default it
+ rule has been explicitly installed (crate setup sudoers); by default it
  only notifies.
 EOF
 
-  dpkg-deb --build --root-owner-group "$stage" "$OUTPUT_DIR/pallet_${VERSION}_${ARCH}.deb"
+  dpkg-deb --build --root-owner-group "$stage" "$OUTPUT_DIR/stackcrate_${VERSION}_${ARCH}.deb"
   rm -rf "$stage"
 }
 
 build_gui_package() {
-  [[ -x "$RELEASE_DIR/pallet-gui" ]] || {
-    echo "pallet-gui binary not found; skipping pallet-gui_*.deb" >&2
+  [[ -x "$RELEASE_DIR/stackcrate-gui" ]] || {
+    echo "stackcrate-gui binary not found; skipping stackcrate-gui_*.deb" >&2
     return 0
   }
   local stage
@@ -99,35 +99,35 @@ build_gui_package() {
   mkdir -p "$stage/DEBIAN" \
     "$stage/usr/bin" \
     "$stage/usr/share/applications" \
-    "$stage/usr/share/doc/pallet-gui"
+    "$stage/usr/share/doc/stackcrate-gui"
 
-  install -m 0755 "$RELEASE_DIR/pallet-gui" "$stage/usr/bin/pallet-gui"
-  install -m 0644 "$ROOT/packaging/desktop/org.pallet.Pallet.desktop" \
-    "$stage/usr/share/applications/org.pallet.Pallet.desktop"
-  if [[ -f "$ROOT/assets/pallet.png" ]]; then
+  install -m 0755 "$RELEASE_DIR/stackcrate-gui" "$stage/usr/bin/stackcrate-gui"
+  install -m 0644 "$ROOT/packaging/desktop/org.stackcrate.StackCrate.desktop" \
+    "$stage/usr/share/applications/org.stackcrate.StackCrate.desktop"
+  if [[ -f "$ROOT/assets/stackcrate.png" ]]; then
     mkdir -p "$stage/usr/share/icons/hicolor/512x512/apps"
-    install -m 0644 "$ROOT/assets/pallet.png" "$stage/usr/share/icons/hicolor/512x512/apps/org.pallet.Pallet.png"
+    install -m 0644 "$ROOT/assets/stackcrate.png" "$stage/usr/share/icons/hicolor/512x512/apps/org.stackcrate.StackCrate.png"
   fi
-  install -m 0644 "$ROOT/LICENSE" "$stage/usr/share/doc/pallet-gui/copyright"
-  write_changelog pallet-gui "$stage/usr/share/doc/pallet-gui/changelog.gz"
+  install -m 0644 "$ROOT/LICENSE" "$stage/usr/share/doc/stackcrate-gui/copyright"
+  write_changelog stackcrate-gui "$stage/usr/share/doc/stackcrate-gui/changelog.gz"
 
   cat >"$stage/DEBIAN/control" <<EOF
-Package: pallet-gui
+Package: stackcrate-gui
 Version: $VERSION
 Section: admin
 Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: pallet (= $VERSION), libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
+Depends: stackcrate (= $VERSION), libc6 (>= 2.34), libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.4)
 Recommends: desktop-file-utils
 Homepage: $HOMEPAGE
-Description: GTK4/libadwaita desktop app for Pallet
+Description: GTK4/libadwaita desktop app for StackCrate
  Search, installed-packages, and pending-updates views, plus a
  header-bar action to install a local .deb/archive/AppImage file,
- backed by the same pallet-core engine as the pallet CLI.
+ backed by the same stackcrate-core engine as the crate CLI.
 EOF
 
-  dpkg-deb --build --root-owner-group "$stage" "$OUTPUT_DIR/pallet-gui_${VERSION}_${ARCH}.deb"
+  dpkg-deb --build --root-owner-group "$stage" "$OUTPUT_DIR/stackcrate-gui_${VERSION}_${ARCH}.deb"
   rm -rf "$stage"
 }
 

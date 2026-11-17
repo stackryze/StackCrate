@@ -12,7 +12,7 @@ intentionally not here yet).
 
 ### Added
 
-- **`pallet-core`**: the `PackageSource` trait and six adapters --
+- **`stackcrate-core`**: the `PackageSource` trait and six adapters --
   apt (named packages via `apt-get`/`apt-cache`/`dpkg-query`), local `.deb`
   files (`dpkg -i` with automatic `apt-get install -f` dependency recovery),
   plain archives (`.tar`, `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.zip` with
@@ -23,21 +23,21 @@ intentionally not here yet).
 - `pkexec`-preferred, `sudo`-fallback privilege escalation, with a
   passwordless-sudo probe so unattended operations never risk a surprise
   auth prompt, and an optional narrowly-scoped sudoers rule
-  (`pallet setup sudoers`).
+  (`crate setup sudoers`).
 - A WAL-mode SQLite registry for manual installs, update cache, operation
   history, and pins.
-- **`pallet` CLI**: search/install/remove/update/list/status/history/
+- **`crate` CLI**: search/install/remove/update/list/status/history/
   pin/unpin/setup/config, with confirmation prompts that refuse to proceed
   without `--yes` in a non-interactive session.
-- **`pallet-daemon`**: a `systemd --user` background monitor --
+- **`stackcrate-daemon`**: a `systemd --user` background monitor --
   timer-driven checks, a debounced and rate-limited filesystem watch for
-  faster reaction to changes made outside Pallet, deduped desktop
+  faster reaction to changes made outside StackCrate, deduped desktop
   notifications, and update policies (notify-only/security-only/auto-all).
-- **`pallet-gui`**: a GTK4 + libadwaita desktop app -- search, installed,
+- **`stackcrate-gui`**: a GTK4 + libadwaita desktop app -- search, installed,
   updates, a header-bar "install a local file" action, and settings.
 - Packaging: a `systemd --user` service unit, a polkit policy for clearer
   `pkexec` prompts, a `.desktop` launcher, `install.sh`, and `.deb` packages
-  (`pallet`, `pallet-gui`) built and verified with `lintian` and a real
+  (`crate`, `stackcrate-gui`) built and verified with `lintian` and a real
   `apt-get install` in a throwaway container.
 
 [0.1.0]: https://github.com/stackryze/StackCrate/releases/tag/v0.1.0
