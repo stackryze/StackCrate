@@ -13,7 +13,7 @@ chrono = "0.4.45"
 notify = "8.2.2"
 notify-debouncer-mini = { version = "0.7.0", default-features = false }
 notify-rust = "4.19.0"
-stackcrate-core = { version = "0.1.0", path = "../stackcrate-core" }
+stackcrate-core = { path = "../stackcrate-core" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "fs"] }

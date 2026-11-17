@@ -59,11 +59,23 @@ fn apply_policy(engine: &Engine, updates: &[stackcrate_core::types::UpdateInfo])
         .list_pins()
         .unwrap_or_default()
         .into_iter()
+        .map(|p| (p.source, p.package_id))
         .collect();
     let actionable: Vec<_> = updates
         .iter()
         .filter(|u| !pinned.contains(&(u.source, u.id.clone())))
         .collect();
+
+    if engine.config.update_policy != UpdatePolicy::NotifyOnly
+        && engine.config.require_ac_power_for_auto_update
+        && stackcrate_core::power::on_ac_power() == Some(false)
+    {
+        info!(
+            "on battery power with require-ac-power-for-auto-update set: skipping unattended \
+             install this cycle (still notifying as usual)"
+        );
+        return;
+    }
 
     match engine.config.update_policy {
         UpdatePolicy::NotifyOnly => {}
