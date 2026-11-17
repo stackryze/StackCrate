@@ -112,6 +112,32 @@ fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Total size of everything under `path`, in kibibytes. Best-effort: `None`
+/// if `path` doesn't exist (nothing wrong, just nothing to report).
+fn dir_size_kb(path: &Path) -> Option<u64> {
+    if !path.exists() {
+        return None;
+    }
+    Some(dir_size_bytes(path) / 1024)
+}
+
+fn dir_size_bytes(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if metadata.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|entry| dir_size_bytes(&entry.path()))
+            .sum()
+    } else {
+        metadata.len()
+    }
+}
+
 pub fn install_archive(path: &Path, opts: &ArchiveInstallOptions) -> Result<OperationOutcome> {
     if !path.exists() {
         return Err(Error::InvalidPath(format!(
@@ -125,8 +151,12 @@ pub fn install_archive(path: &Path, opts: &ArchiveInstallOptions) -> Result<Oper
         .unwrap_or_else(|| default_name_from_path(path));
     let slug = desktop::slugify(&name)?;
     let dest = Paths::archive_dir().join(&slug);
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest)?;
+
+    let registry = Registry::open_default()?;
+    if let Some(existing) = registry.get_manual(&slug)? {
+        crate::snapshot::snapshot_if_present(&registry, &existing, &dest)?;
+    } else if dest.exists() {
+        std::fs::remove_dir_all(&dest)?; // untracked leftover; nothing to snapshot
     }
     archive_safety::extract_any(path, &dest)?;
 
@@ -184,7 +214,6 @@ pub fn install_archive(path: &Path, opts: &ArchiveInstallOptions) -> Result<Oper
         )?);
     }
 
-    let registry = Registry::open_default()?;
     registry.upsert_manual(&ManualInstall {
         id: slug.clone(),
         source: SourceId::Archive,
@@ -256,9 +285,9 @@ impl super::PackageSource for ArchiveSource {
                 description: format!("Manually installed archive at {}", m.path),
                 source: Some(SourceId::Archive),
                 installed: true,
-                available_version: None,
-                is_security_update: false,
+                size_kb: dir_size_kb(Path::new(&m.path)),
                 icon: m.icon_path,
+                ..Package::default()
             })
             .collect())
     }
