@@ -1,0 +1,8 @@
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock.bak
+
+# Local runtime artifacts, in case anything is ever run from inside the repo
+*.sock
+*.log
