@@ -102,6 +102,21 @@ pub fn run_privileged(program: &str, args: &[String], timeout: Duration) -> Resu
     process::run_owned(&wrapped_program, &wrapped_args, timeout)
 }
 
+/// Streaming counterpart to `run_privileged`, for callers that want live
+/// output (see `process::run_owned_streaming`).
+pub fn run_privileged_streaming(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+    on_line: process::LineSink,
+) -> Result<CommandOutput> {
+    if !am_root() && !process::binary_available("pkexec") && !process::binary_available("sudo") {
+        return Err(Error::NoPrivilegeHelper);
+    }
+    let (wrapped_program, wrapped_args) = wrap(program, args)?;
+    process::run_owned_streaming(&wrapped_program, &wrapped_args, timeout, on_line)
+}
+
 /// Probe whether `program` can run under `sudo` right now with no password
 /// prompt at all (`sudo -n` fails fast instead of prompting). Used by the
 /// background daemon to decide whether an unattended metadata refresh is
@@ -133,6 +148,7 @@ pub fn passwordless_available(program: &str) -> bool {
 pub fn known_package_manager_binaries() -> Vec<std::path::PathBuf> {
     [
         "apt-get",
+        "apt-mark",
         "dpkg",
         "apt-cache",
         "dnf5",

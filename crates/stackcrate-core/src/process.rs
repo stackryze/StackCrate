@@ -138,6 +138,93 @@ pub fn run_in(
     })
 }
 
+/// A shared sink for `run_owned_streaming` to call once per output line, as it
+/// arrives, in addition to the line being appended to the final
+/// `CommandOutput` like normal. `Arc` (not `Box`) because it is cloned once
+/// per stream (stdout, stderr) to hand to that stream's reader thread.
+pub type LineSink = std::sync::Arc<dyn Fn(crate::types::StreamKind, &str) + Send + Sync>;
+
+/// Like `run_owned`, but invokes `on_line` once per line of stdout/stderr as
+/// it arrives instead of only returning the full output once the process
+/// exits, for callers that want to show live progress (the GUI's install/
+/// remove/update progress view). The returned `CommandOutput` still contains
+/// everything, exactly like `run_owned`; this only adds a side channel.
+pub fn run_owned_streaming(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+    on_line: LineSink,
+) -> Result<CommandOutput> {
+    use crate::types::StreamKind;
+
+    let mut command = Command::new(program);
+    command.args(args);
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Error::BinaryMissing {
+                    binary: program.to_string(),
+                }
+            } else {
+                Error::Io(e)
+            }
+        })?;
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_sink = on_line.clone();
+    let stdout_handle =
+        std::thread::spawn(move || read_streaming(stdout_pipe, StreamKind::Stdout, &stdout_sink));
+    let stderr_handle =
+        std::thread::spawn(move || read_streaming(stderr_pipe, StreamKind::Stderr, &on_line));
+
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(Error::Io)? {
+            break status;
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::CommandTimeout {
+                command: render(program, args),
+                seconds: timeout.as_secs(),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+
+    Ok(CommandOutput {
+        code: status.code().unwrap_or(-1),
+        stdout,
+        stderr,
+    })
+}
+
+fn read_streaming(
+    pipe: Option<impl Read>,
+    kind: crate::types::StreamKind,
+    on_line: &LineSink,
+) -> String {
+    let mut buf = String::new();
+    let Some(pipe) = pipe else { return buf };
+    for line in std::io::BufRead::lines(std::io::BufReader::new(pipe)) {
+        let Ok(line) = line else { break };
+        on_line(kind, &line);
+        buf.push_str(&line);
+        buf.push('\n');
+    }
+    buf
+}
+
 /// Like `run`, but turns a non-zero exit code into `Error::CommandFailed`.
 pub fn run_checked(program: &str, args: &[&str], timeout: Duration) -> Result<CommandOutput> {
     let out = run(program, args, timeout)?;

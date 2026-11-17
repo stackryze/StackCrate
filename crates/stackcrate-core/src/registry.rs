@@ -42,6 +42,29 @@ pub struct HistoryEntry {
     pub detail: String,
 }
 
+/// One package held back from bulk updates, optionally pinned to a specific
+/// version (apt: also enforced at the OS level via `apt-mark hold`, so a
+/// plain `apt upgrade` run outside StackCrate respects it too).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinInfo {
+    pub source: SourceId,
+    pub package_id: String,
+    pub pinned_version: Option<String>,
+}
+
+/// A previous on-disk state of a manually-tracked install (archive or
+/// AppImage), saved right before it was overwritten, so `crate rollback` can
+/// restore it. `manual_install` is the full registry row as it was at
+/// snapshot time, so restoring never has to regenerate a desktop file, icon,
+/// or exec path by guesswork.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotInfo {
+    pub id: i64,
+    pub snapshot_path: String,
+    pub manual_install: ManualInstall,
+    pub created_at: DateTime<Utc>,
+}
+
 impl Registry {
     pub fn open_default() -> Result<Self> {
         Self::open(Paths::registry_db())
@@ -52,7 +75,9 @@ impl Registry {
             std::fs::create_dir_all(parent)?;
         }
         let reg = Registry { db_path };
-        reg.connect()?.execute_batch(SCHEMA)?;
+        let conn = reg.connect()?;
+        conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(reg)
     }
 
@@ -278,10 +303,11 @@ impl Registry {
 
     // ---- pins ----------------------------------------------------------
 
-    pub fn pin(&self, source: SourceId, package_id: &str) -> Result<()> {
+    pub fn pin(&self, source: SourceId, package_id: &str, version: Option<&str>) -> Result<()> {
         self.connect()?.execute(
-            "INSERT OR IGNORE INTO pins (source, package_id) VALUES (?1, ?2)",
-            params![source.as_str(), package_id],
+            "INSERT INTO pins (source, package_id, pinned_version) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source, package_id) DO UPDATE SET pinned_version = excluded.pinned_version",
+            params![source.as_str(), package_id, version],
         )?;
         Ok(())
     }
@@ -304,20 +330,77 @@ impl Registry {
         Ok(count > 0)
     }
 
-    pub fn list_pins(&self) -> Result<Vec<(SourceId, String)>> {
+    pub fn list_pins(&self) -> Result<Vec<PinInfo>> {
         let conn = self.connect()?;
-        let mut stmt = conn.prepare("SELECT source, package_id FROM pins")?;
+        let mut stmt = conn.prepare("SELECT source, package_id, pinned_version FROM pins")?;
         let rows = stmt.query_map([], |row| {
             let source: String = row.get(0)?;
-            Ok((source, row.get::<_, String>(1)?))
+            Ok(PinInfo {
+                source: source.parse().unwrap_or(SourceId::Apt),
+                package_id: row.get(1)?,
+                pinned_version: row.get(2)?,
+            })
         })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (source, id) = row?;
-            out.push((source.parse().unwrap_or(SourceId::Apt), id));
-        }
-        Ok(out)
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+
+    // ---- snapshots (archive/AppImage rollback) --------------------------
+
+    pub fn add_snapshot(&self, snapshot_path: &str, manual_install: &ManualInstall) -> Result<i64> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO snapshots (source, package_id, snapshot_path, manual_install_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                manual_install.source.as_str(),
+                manual_install.id,
+                snapshot_path,
+                serde_json::to_string(manual_install)?,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn latest_snapshot(
+        &self,
+        source: SourceId,
+        package_id: &str,
+    ) -> Result<Option<SnapshotInfo>> {
+        Ok(self.list_snapshots(source, package_id)?.into_iter().next())
+    }
+
+    pub fn list_snapshots(&self, source: SourceId, package_id: &str) -> Result<Vec<SnapshotInfo>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, snapshot_path, manual_install_json, created_at
+             FROM snapshots WHERE source = ?1 AND package_id = ?2 ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map(params![source.as_str(), package_id], row_to_snapshot)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn remove_snapshot(&self, id: i64) -> Result<()> {
+        self.connect()?
+            .execute("DELETE FROM snapshots WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+}
+
+fn row_to_snapshot(row: &rusqlite::Row) -> rusqlite::Result<SnapshotInfo> {
+    let manual_json: String = row.get(2)?;
+    let created_at: String = row.get(3)?;
+    let manual_install: ManualInstall = serde_json::from_str(&manual_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    Ok(SnapshotInfo {
+        id: row.get(0)?,
+        snapshot_path: row.get(1)?,
+        manual_install,
+        created_at: DateTime::parse_from_rfc3339(&created_at)
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+    })
 }
 
 fn row_to_manual(row: &rusqlite::Row) -> rusqlite::Result<ManualInstall> {
@@ -374,10 +457,33 @@ CREATE TABLE IF NOT EXISTS history (
 CREATE TABLE IF NOT EXISTS pins (
     source TEXT NOT NULL,
     package_id TEXT NOT NULL,
+    pinned_version TEXT,
     PRIMARY KEY (source, package_id)
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    snapshot_path TEXT NOT NULL,
+    manual_install_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 ";
+
+/// Schema changes for databases created before this column/table existed.
+/// `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` in SQLite, so a
+/// "duplicate column" failure here just means a previous run already
+/// applied it, and is ignored; anything else is a real error.
+fn migrate(conn: &Connection) -> Result<()> {
+    if let Err(e) = conn.execute("ALTER TABLE pins ADD COLUMN pinned_version TEXT", []) {
+        let message = e.to_string();
+        if !message.contains("duplicate column name") {
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}

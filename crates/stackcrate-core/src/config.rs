@@ -35,6 +35,13 @@ pub struct Config {
     pub require_checksum_for_appimage: bool,
     #[serde(default)]
     pub require_checksum_for_archive: bool,
+    /// When true, `security-only`/`auto-all` policies only actually install
+    /// anything while on AC power; on battery they fall back to notifying,
+    /// same as `notify-only`. Checking still always happens on schedule
+    /// either way. Defaults to false (preserves pre-existing behavior) since
+    /// most machines this runs on today are desktops with no battery.
+    #[serde(default)]
+    pub require_ac_power_for_auto_update: bool,
 }
 
 fn default_interval() -> u64 {
@@ -53,6 +60,7 @@ impl Default for Config {
             disabled_sources: Vec::new(),
             require_checksum_for_appimage: false,
             require_checksum_for_archive: false,
+            require_ac_power_for_auto_update: false,
         }
     }
 }
@@ -98,6 +106,16 @@ impl Paths {
         home_dir().join(".local/opt/stackcrate/apps")
     }
 
+    /// Where a manual install's previous on-disk state is moved to right
+    /// before being overwritten by a newer one, so `crate rollback` can
+    /// restore it. Deliberately under the same `.local/opt/stackcrate` tree
+    /// as `archive_dir`/`appimage_dir` (not `data_dir`, which could in
+    /// principle be a different filesystem) so moving files in and out of
+    /// it is a cheap rename, never a cross-filesystem copy.
+    pub fn snapshot_dir() -> PathBuf {
+        home_dir().join(".local/opt/stackcrate/snapshots")
+    }
+
     pub fn bin_dir() -> PathBuf {
         home_dir().join(".local/bin")
     }
@@ -136,6 +154,7 @@ pub fn ensure_dirs() -> Result<()> {
         Paths::cache_dir(),
         Paths::appimage_dir(),
         Paths::archive_dir(),
+        Paths::snapshot_dir(),
         Paths::bin_dir(),
         Paths::applications_dir(),
         Paths::icon_dir(),

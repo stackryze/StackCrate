@@ -74,6 +74,77 @@ pub struct Package {
     pub available_version: Option<String>,
     pub is_security_update: bool,
     pub icon: Option<String>,
+    /// Installed (or would-be-installed) size in kibibytes, when the source
+    /// can report it cheaply. `None` means unknown, not zero.
+    pub size_kb: Option<u64>,
+    pub maintainer: Option<String>,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
+    /// apt only: `Some(true)` if the user explicitly asked for this package
+    /// (as opposed to it being pulled in as a dependency). `None` when the
+    /// source doesn't have this concept or it wasn't looked up.
+    pub manually_installed: Option<bool>,
+}
+
+/// Why a package is installed, and what would break if it were removed.
+/// Populated on demand (`Engine::explain`), not as part of every listing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExplainInfo {
+    pub manually_installed: Option<bool>,
+    /// Other installed packages that declare a dependency on this one.
+    pub required_by: Vec<String>,
+}
+
+/// Disk space used by one source's installed packages, for the disk-usage
+/// summary (`Engine::disk_usage_summary`). Packages with an unknown size
+/// don't contribute to `total_kb` but are counted so the summary can say so.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskUsageEntry {
+    pub source: SourceId,
+    pub total_kb: u64,
+    pub package_count: usize,
+    pub unknown_size_count: usize,
+}
+
+/// Parse a human-readable size string (as printed by `flatpak info`, `snap
+/// info`, etc: `"26.3 MB"`, `"4096B"`, `"1.2 GiB"`, ...) into kibibytes.
+/// Returns `None` for anything that doesn't look like `<number><unit>`.
+pub fn parse_size_to_kb(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let split_at = text.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+    let (number, unit) = text.split_at(split_at);
+    let value: f64 = number.trim().parse().ok()?;
+    let unit = unit.trim().to_ascii_lowercase();
+    let kib = match unit.as_str() {
+        "b" | "" => value / 1024.0,
+        "k" | "kb" | "kib" => value,
+        "m" | "mb" | "mib" => value * 1024.0,
+        "g" | "gb" | "gib" => value * 1024.0 * 1024.0,
+        "t" | "tb" | "tib" => value * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some(kib.round() as u64)
+}
+
+/// Render kibibytes back into the kind of human-readable string used across
+/// the CLI and GUI (`"128.4 MB"`), picking the largest unit that keeps the
+/// number readable.
+pub fn format_size_kb(kb: u64) -> String {
+    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    let mut value = kb as f64;
+    let mut unit = "KB";
+    for candidate in UNITS {
+        unit = candidate;
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+    }
+    if unit == "KB" && value.fract() == 0.0 {
+        format!("{value:.0} {unit}")
+    } else {
+        format!("{value:.1} {unit}")
+    }
 }
 
 /// Severity classification used for update notifications and auto-apply policy.
@@ -209,4 +280,39 @@ pub struct ProgressLine {
 pub enum StreamKind {
     Stdout,
     Stderr,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_plain_bytes() {
+        assert_eq!(parse_size_to_kb("4096B"), Some(4));
+    }
+
+    #[test]
+    fn parses_decimal_megabytes() {
+        assert_eq!(parse_size_to_kb("26.3 MB"), Some(26931));
+    }
+
+    #[test]
+    fn parses_gib_case_insensitively() {
+        assert_eq!(parse_size_to_kb("1GiB"), Some(1024 * 1024));
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert_eq!(parse_size_to_kb("not a size"), None);
+    }
+
+    #[test]
+    fn formats_small_sizes_as_whole_kb() {
+        assert_eq!(format_size_kb(512), "512 KB");
+    }
+
+    #[test]
+    fn formats_large_sizes_with_one_decimal() {
+        assert_eq!(format_size_kb(1536), "1.5 MB");
+    }
 }
