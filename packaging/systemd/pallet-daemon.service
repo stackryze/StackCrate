@@ -1,0 +1,26 @@
+[Unit]
+Description=Pallet background update monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# `pallet setup daemon` generates this same unit with ExecStart pointing at
+# wherever pallet-daemon actually got installed; this static copy assumes
+# both binaries are on PATH (e.g. after `cargo install` or a system package).
+ExecStart=%h/.local/bin/pallet-daemon
+Restart=on-failure
+RestartSec=5
+
+# Deliberately no ProtectSystem=/ProtectHome=/NoNewPrivileges= hardening here.
+# The daemon escalates privilege per-command via pkexec/sudo (see
+# crates/pallet-core/src/privilege.rs), and the resulting root process
+# inherits this unit's mount namespace. `ProtectSystem=strict` would make
+# most of the filesystem read-only for that root process too, which would
+# silently break apt-get's ability to write /var/lib/apt and /var/cache/apt
+# even though it's running as root; `NoNewPrivileges=true` would stop
+# pkexec/sudo's setuid escalation from working at all. Namespace-based
+# sandboxing here would need to be designed around those paths specifically
+# before it's safe to add.
+
+[Install]
+WantedBy=default.target

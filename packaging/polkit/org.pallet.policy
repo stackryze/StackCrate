@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Pallet shells out to pkexec directly (see crates/pallet-core/src/privilege.rs)
+  rather than running a dedicated setuid helper, so there is no single binary
+  to hang one action off of. pkexec matches a command against an action by
+  its "org.freedesktop.policykit.exec.path" annotation, so each binary Pallet
+  might invoke through pkexec gets its own action here purely to replace
+  pkexec's generic "Authentication is required to run ..." dialog with a
+  clearer message. This file is entirely cosmetic: if it's missing, malformed,
+  or a path doesn't match this system's layout, polkit silently falls back to
+  its built-in generic action and nothing is granted that wouldn't be anyway.
+-->
+<policyconfig>
+  <vendor>Pallet</vendor>
+  <vendor_url>https://github.com/stackryze/StackCrate</vendor_url>
+
+  <action id="org.pallet.run-apt-get">
+    <description>Run apt-get</description>
+    <message>Authentication is required to install, remove, or update packages with apt</message>
+    <icon_name>software-update-available-symbolic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/apt-get</annotate>
+  </action>
+
+  <action id="org.pallet.run-dpkg">
+    <description>Run dpkg</description>
+    <message>Authentication is required to install a local .deb package</message>
+    <icon_name>software-update-available-symbolic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/dpkg</annotate>
+  </action>
+
+  <action id="org.pallet.run-snap">
+    <description>Run snap</description>
+    <message>Authentication is required to install, remove, or update a snap package</message>
+    <icon_name>software-update-available-symbolic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/snap</annotate>
+  </action>
+
+  <action id="org.pallet.run-install">
+    <description>Install the Pallet sudoers rule</description>
+    <message>Authentication is required to install a sudoers rule for Pallet</message>
+    <icon_name>software-update-available-symbolic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/install</annotate>
+  </action>
+</policyconfig>
